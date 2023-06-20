@@ -151,11 +151,13 @@ public abstract class DebeziumSource extends RowSource {
     if (deserializerClassName.equals(StringDeserializer.class.getName())) {
       kafkaData = AvroConversionUtils.createDataFrame(
           KafkaUtils.<String, String>createRDD(sparkContext, offsetGen.getKafkaParams(), offsetRanges, LocationStrategies.PreferConsistent())
+              .filter(x -> filterForNullValues(x.value()))
               .map(obj -> convertor.fromJson(obj.value()))
               .rdd(), schemaStr, sparkSession);
     } else {
       kafkaData = AvroConversionUtils.createDataFrame(
           KafkaUtils.createRDD(sparkContext, offsetGen.getKafkaParams(), offsetRanges, LocationStrategies.PreferConsistent())
+              .filter(x -> filterForNullValues(x.value()))
               .map(obj -> (GenericRecord) obj.value())
               .rdd(), schemaStr, sparkSession);
     }
@@ -246,6 +248,15 @@ public abstract class DebeziumSource extends RowSource {
         KafkaSourceConfig.ENABLE_KAFKA_COMMIT_OFFSET.defaultValue())) {
       offsetGen.commitOffsetToKafka(lastCkptStr);
     }
+  }
+
+  private static Boolean filterForNullValues(Object value) {
+    LOG.info("Filtering for null values, value in filterForNullValues is " + value);
+    if (value == null) {
+      LOG.info("Found a null value (tombstone) message, filtering it out of the dataframe.");
+      return false;
+    }
+    return true;
   }
 }
 
