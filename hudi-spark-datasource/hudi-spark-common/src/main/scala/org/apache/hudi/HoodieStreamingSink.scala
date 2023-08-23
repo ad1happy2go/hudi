@@ -24,7 +24,7 @@ import org.apache.hudi.client.common.HoodieSparkEngineContext
 import org.apache.hudi.common.model.{HoodieCommitMetadata, WriteConcurrencyMode}
 import org.apache.hudi.common.table.marker.MarkerType
 import org.apache.hudi.common.table.timeline.HoodieInstant.State
-import org.apache.hudi.common.table.timeline.{HoodieInstant, HoodieTimeline}
+import org.apache.hudi.common.table.timeline.{HoodieArchivedTimeline, HoodieInstant, HoodieTimeline}
 import org.apache.hudi.common.table.{HoodieTableConfig, HoodieTableMetaClient}
 import org.apache.hudi.common.util.ValidationUtils.checkArgument
 import org.apache.hudi.common.util.{ClusteringUtils, CommitUtils, CompactionUtils, ConfigUtils, JsonUtils, StringUtils}
@@ -321,8 +321,17 @@ class HoodieStreamingSink(sqlContext: SQLContext,
       // get the latest checkpoint from the commit metadata to check if the microbatch has already been processed or not
       val lastCheckpoint = CommitUtils.getValidCheckpointForCurrentWriter(
         metaClient.get.getActiveTimeline.getWriteTimeline, SINK_CHECKPOINT_KEY, identifier)
+
       if (lastCheckpoint.isPresent) {
         latestCommittedBatchId = lastCheckpoint.get().toLong
+      }else if(incomingBatchId > 0){
+        val archivedTimeline: HoodieArchivedTimeline = metaClient.get.getArchivedTimeline
+        archivedTimeline.loadCompletedInstantDetailsInMemory()
+        val lastCheckpointFromArchived = CommitUtils.getValidCheckpointForCurrentWriter(
+          archivedTimeline.getWriteTimeline, SINK_CHECKPOINT_KEY, identifier)
+        if(lastCheckpointFromArchived.isPresent){
+          latestCommittedBatchId = lastCheckpointFromArchived.get().toLong
+        }
       }
       latestCommittedBatchId >= incomingBatchId
     } else {
