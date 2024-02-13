@@ -22,6 +22,8 @@ import org.apache.avro.generic.GenericRecord
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.hudi.AvroConversionUtils.{convertStructTypeToAvroSchema, getAvroRecordNameAndNamespace}
+import org.apache.hadoop.hive.conf.HiveConf
+import org.apache.hadoop.hive.shims.ShimLoader
 import org.apache.hudi.DataSourceWriteOptions._
 import org.apache.hudi.HoodieConversionUtils.{toProperties, toScalaOption}
 import org.apache.hudi.HoodieWriterUtils._
@@ -668,7 +670,16 @@ object HoodieSparkSqlWriter {
       properties.put(HiveSyncConfigHolder.HIVE_SYNC_SCHEMA_STRING_LENGTH_THRESHOLD.key, spark.sessionState.conf.getConf(StaticSQLConf.SCHEMA_STRING_LENGTH_THRESHOLD).toString)
       properties.put(HoodieSyncConfig.META_SYNC_SPARK_VERSION.key, SPARK_VERSION)
       properties.put(HoodieSyncConfig.META_SYNC_USE_FILE_LISTING_FROM_METADATA.key, hoodieConfig.getBoolean(HoodieMetadataConfig.ENABLE))
-
+      try {
+          val passwd = ShimLoader.getHadoopShims.getPassword(spark.sparkContext.hadoopConfiguration, HiveConf.ConfVars.METASTOREPWD.varname)
+          if (passwd != null && !passwd.isEmpty) {
+            fs.getConf.set(HiveConf.ConfVars.METASTOREPWD.varname, passwd)
+            properties.put(HiveSyncConfigHolder.HIVE_PASS.key(), passwd)
+          }
+      } catch {
+          case e: Exception =>
+            log.info("Exception while trying to get Meta Sync password from hadoop credential store", e)
+      }
       syncClientToolClassSet.foreach(impl => {
         SyncUtilHelpers.runHoodieMetaSync(impl.trim, properties, fs.getConf, fs, basePath.toString, baseFileFormat)
       })
