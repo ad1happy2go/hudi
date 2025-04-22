@@ -48,6 +48,7 @@ import software.amazon.awssdk.services.glue.model.GetDatabaseRequest;
 import software.amazon.awssdk.services.glue.model.GetPartitionsRequest;
 import software.amazon.awssdk.services.glue.model.GetPartitionsResponse;
 import software.amazon.awssdk.services.glue.model.GetTableRequest;
+import software.amazon.awssdk.services.glue.model.PartitionError;
 import software.amazon.awssdk.services.glue.model.PartitionInput;
 import software.amazon.awssdk.services.glue.model.PartitionValueList;
 import software.amazon.awssdk.services.glue.model.SerDeInfo;
@@ -240,10 +241,18 @@ public class AWSGlueCatalogSyncClient extends HoodieSyncClient {
             .build();
         futures.add(awsGlue.batchDeletePartition(batchDeletePartitionRequest));
       }
-
+      List<PartitionError> nonIgnorableErrors = new ArrayList<>();
       for (CompletableFuture<BatchDeletePartitionResponse> future : futures) {
         BatchDeletePartitionResponse response = future.get();
-        if (CollectionUtils.nonEmpty(response.errors())) {
+        for (PartitionError error : response.errors()) {
+          String errorMessage = error.errorDetail().errorMessage();
+          if (errorMessage != null && errorMessage.contains("EntityNotFoundException")) {
+            LOG.warn("Partition not found while attempting to drop, ignoring: " + error.partitionValues());
+          } else {
+            nonIgnorableErrors.add(error);
+          }
+        }
+        if (!nonIgnorableErrors.isEmpty()) {
           throw new HoodieGlueSyncException("Fail to drop partitions to " + tableId(databaseName, tableName)
               + " with error(s): " + response.errors());
         }
