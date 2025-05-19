@@ -42,6 +42,11 @@ public final class LocalTaskContextSupplier extends TaskContextSupplier {
   }
 
   @Override
+  public Supplier<Integer> getAttemptNumberSupplier() {
+    return null;
+  }
+
+  @Override
   public Option<String> getProperty(EngineProperty prop) {
     return Option.empty();
   }

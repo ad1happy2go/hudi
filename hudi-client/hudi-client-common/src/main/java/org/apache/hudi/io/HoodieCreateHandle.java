@@ -111,6 +111,18 @@ public class HoodieCreateHandle<T, I, K, O> extends HoodieWriteHandle<T, I, K, O
       throw new HoodieInsertException("Failed to initialize HoodieStorageWriter for path " + path, e);
     }
     LOG.info("New CreateHandle for partition :" + partitionPath + " with fileId " + fileId);
+    long attemptNumber = taskContextSupplier.getAttemptNumberSupplier().get();
+    int partitionId = taskContextSupplier.getPartitionIdSupplier().get();
+    LOG.warn("Checking if need to wait for Attempt Number - " + attemptNumber);
+    LOG.warn("Checking if need to wait for Partition Number - " + partitionId);
+    if (attemptNumber == 0 && partitionId == 0) {
+      try {
+        LOG.warn("Waiting for 1 minute now");
+        Thread.sleep(5000);
+      } catch (InterruptedException e) {
+        throw new RuntimeException(e);
+      }
+    }
   }
 
   /**

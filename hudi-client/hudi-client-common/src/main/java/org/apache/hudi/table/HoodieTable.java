@@ -705,7 +705,7 @@ public abstract class HoodieTable<T, I, K, O> implements Serializable {
             .collect(Collectors.toList()),
         partitionFilePair -> {
           final HoodieStorage storage = metaClient.getStorage();
-          LOG.info("Deleting invalid data file=" + partitionFilePair);
+          LOG.warn("Deleting invalid data file=" + partitionFilePair);
           // Delete
           try {
             StoragePath pathToDelete = new StoragePath(partitionFilePair.getValue());
@@ -765,7 +765,7 @@ public abstract class HoodieTable<T, I, K, O> implements Serializable {
       invalidDataPaths.removeAll(validDataPaths);
 
       if (!invalidDataPaths.isEmpty()) {
-        LOG.info("Removing duplicate data files created due to task retries before committing. Paths=" + invalidDataPaths);
+        LOG.warn("Removing duplicate data files created due to task retries before committing. Paths=" + invalidDataPaths);
         Map<String, List<Pair<String, String>>> invalidPathsByPartition = invalidDataPaths.stream()
             .map(dp -> Pair.of(new Path(basePath, dp).getParent().toString(), new Path(basePath, dp).toString()))
             .collect(Collectors.groupingBy(Pair::getKey));

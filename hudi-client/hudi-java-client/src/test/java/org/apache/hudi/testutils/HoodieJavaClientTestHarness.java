@@ -177,6 +177,11 @@ public abstract class HoodieJavaClientTestHarness extends HoodieWriterClientTest
     }
 
     @Override
+    public Supplier<Integer> getAttemptNumberSupplier() {
+      return null;
+    }
+
+    @Override
     public Option<String> getProperty(EngineProperty prop) {
       return Option.empty();
     }

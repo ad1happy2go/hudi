@@ -57,6 +57,11 @@ public class FlinkTaskContextSupplier extends TaskContextSupplier {
   }
 
   @Override
+  public Supplier<Integer> getAttemptNumberSupplier() {
+    return null;
+  }
+
+  @Override
   public Option<String> getProperty(EngineProperty prop) {
     // no operation for now
     return Option.empty();

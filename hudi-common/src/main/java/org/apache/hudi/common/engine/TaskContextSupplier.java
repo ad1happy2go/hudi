@@ -34,5 +34,7 @@ public abstract class TaskContextSupplier implements Serializable {
 
   public abstract Supplier<Long> getAttemptIdSupplier();
 
+  public abstract Supplier<Integer> getAttemptNumberSupplier();
+
   public abstract Option<String> getProperty(EngineProperty prop);
 }
