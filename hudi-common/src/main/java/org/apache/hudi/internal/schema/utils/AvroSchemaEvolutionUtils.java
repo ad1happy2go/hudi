@@ -19,6 +19,9 @@
 package org.apache.hudi.internal.schema.utils;
 
 import org.apache.avro.Schema;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import org.apache.hudi.internal.schema.InternalSchema;
 import org.apache.hudi.internal.schema.action.TableChanges;
 
@@ -35,6 +38,8 @@ import static org.apache.hudi.internal.schema.convert.AvroInternalSchemaConverte
  * Utility methods to support evolve old avro schema based on a given schema.
  */
 public class AvroSchemaEvolutionUtils {
+
+  private static final Logger LOG = LoggerFactory.getLogger(AvroSchemaEvolutionUtils.class);
 
   /**
    * Support reconcile from a new avroSchema.
@@ -54,17 +59,24 @@ public class AvroSchemaEvolutionUtils {
    */
   public static InternalSchema reconcileSchema(Schema incomingSchema, InternalSchema oldTableSchema) {
     InternalSchema inComingInternalSchema = convert(incomingSchema);
+    LOG.warn("Inside Reconcile Schema");
     // check column add/missing
     List<String> colNamesFromIncoming = inComingInternalSchema.getAllColsFullName();
+    LOG.warn("colNamesFromIncoming : " + colNamesFromIncoming);
     List<String> colNamesFromOldSchema = oldTableSchema.getAllColsFullName();
+    LOG.warn("colNamesFromOldSchema : " + colNamesFromOldSchema);
     List<String> diffFromOldSchema = colNamesFromOldSchema.stream().filter(f -> !colNamesFromIncoming.contains(f)).collect(Collectors.toList());
+    LOG.warn("diffFromOldSchema : " + diffFromOldSchema);
     List<String> diffFromEvolutionColumns = colNamesFromIncoming.stream().filter(f -> !colNamesFromOldSchema.contains(f)).collect(Collectors.toList());
+    LOG.warn("diffFromEvolutionColumns : " + diffFromEvolutionColumns);
     // check type change.
     List<String> typeChangeColumns = colNamesFromIncoming
         .stream()
         .filter(f -> colNamesFromOldSchema.contains(f) && !inComingInternalSchema.findType(f).equals(oldTableSchema.findType(f)))
         .collect(Collectors.toList());
+    LOG.warn("typeChangeColumns : " + typeChangeColumns);
     if (colNamesFromIncoming.size() == colNamesFromOldSchema.size() && diffFromOldSchema.size() == 0 && typeChangeColumns.isEmpty()) {
+      LOG.warn("Returning Old table Schema only from Reconcile Method");
       return oldTableSchema;
     }
 
@@ -83,6 +95,7 @@ public class AvroSchemaEvolutionUtils {
       }
       finalAddAction.put(inComingInternalSchema.findIdByName(name), name);
     }
+    LOG.warn("finalAddAction : " + finalAddAction);
 
     TableChanges.ColumnAddChange addChange = TableChanges.ColumnAddChange.get(oldTableSchema);
     finalAddAction.entrySet().stream().forEach(f -> {
@@ -107,7 +120,6 @@ public class AvroSchemaEvolutionUtils {
     typeChangeColumns.stream().filter(f -> !inComingInternalSchema.findType(f).isNestedType()).forEach(col -> {
       typeChange.updateColumnType(col, inComingInternalSchema.findType(col));
     });
-
     return SchemaChangeUtils.applyTableChanges2Schema(internalSchemaAfterAddColumns, typeChange);
   }
 
