@@ -250,11 +250,13 @@ class SparkHoodieTableFileIndex(spark: SparkSession,
             BoundReference(index, partitionSchema(index).dataType, nullable = true)
         }
         val boundPredicate: BasePredicate = try {
-          // Standard OSS Spark usage (1-arg constructor)
-          InterpretedPredicate(transformedPredicate)
+          // Try using 1-arg constructor via reflection
+          val clazz = Class.forName("org.apache.spark.sql.catalyst.expressions.InterpretedPredicate")
+          val ctor = clazz.getConstructor(classOf[Expression])
+          ctor.newInstance(transformedPredicate).asInstanceOf[BasePredicate]
         } catch {
           case _: NoSuchMethodException | _: IllegalArgumentException =>
-            // Runtime fallback for Databricks (2-arg constructor via reflection)
+            // Fallback: Try using 2-arg constructor
             val clazz = Class.forName("org.apache.spark.sql.catalyst.expressions.InterpretedPredicate")
             val ctor = clazz.getConstructor(classOf[Expression], classOf[Boolean])
             ctor.newInstance(transformedPredicate, java.lang.Boolean.FALSE)
