@@ -46,4 +46,18 @@ public class GlueCatalogSyncClientConfig extends HoodieConfig {
       .markAdvanced()
       .sinceVersion("0.14.0")
       .withDocumentation("Makes athena use the metadata table to list partitions and files. Currently it won't benefit from other features such stats indexes");
+
+  public static final ConfigProperty<Boolean> META_SYNC_PARTITION_INDEX_FIELDS_ENABLE = ConfigProperty
+      .key(GLUE_CLIENT_PROPERTY_PREFIX + "partition_index_fields.enable")
+      .defaultValue(false)
+      .sinceVersion("0.15.0")
+      .withDocumentation("Enable aws glue partition index feature, to speedup partition based query pattern");
+
+  public static final ConfigProperty<Boolean> RECREATE_GLUE_TABLE_ON_ERROR = ConfigProperty
+      .key(GLUE_CLIENT_PROPERTY_PREFIX + "recreate_table_on_error")
+      .defaultValue(false)
+      .sinceVersion("0.14.0")
+      .markAdvanced()
+      .withDocumentation("Glue sync may fail if the Glue table exists with partitions differing from the Hoodie table or if schema evolution is not supported by Glue."
+          + "Enabling this configuration will drop and create the table to match the Hoodie config");
 }
