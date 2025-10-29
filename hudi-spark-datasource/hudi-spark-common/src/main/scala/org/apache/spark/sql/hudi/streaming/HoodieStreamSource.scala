@@ -17,7 +17,7 @@
 
 package org.apache.spark.sql.hudi.streaming
 
-import org.apache.hudi.DataSourceReadOptions.INCREMENTAL_READ_HANDLE_HOLLOW_COMMIT
+import org.apache.hudi.DataSourceReadOptions.{SPARK_STREAMING_LIMIT_NUM_INSTANTS, INCREMENTAL_READ_HANDLE_HOLLOW_COMMIT}
 import org.apache.hudi.cdc.CDCRelation
 import org.apache.hudi.common.model.HoodieTableType
 import org.apache.hudi.common.table.cdc.HoodieCDCUtils
@@ -25,34 +25,38 @@ import org.apache.hudi.common.table.timeline.TimelineUtils.HollowCommitHandling.
 import org.apache.hudi.common.table.timeline.TimelineUtils.{HollowCommitHandling, handleHollowCommitIfNeeded}
 import org.apache.hudi.common.table.{HoodieTableMetaClient, TableSchemaResolver}
 import org.apache.hudi.common.util.TablePathUtils
+import org.apache.hudi.exception.HoodieException
 import org.apache.hudi.hadoop.fs.HadoopFSUtils
 import org.apache.hudi.storage.hadoop.HoodieHadoopStorage
 import org.apache.hudi.storage.{HoodieStorageUtils, StoragePath}
 import org.apache.hudi.{AvroConversionUtils, DataSourceReadOptions, IncrementalRelation, MergeOnReadIncrementalRelation, SparkAdapterSupport}
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.execution.streaming.{Offset, Source}
+import org.apache.spark.sql.connector.read.streaming
+import org.apache.spark.sql.connector.read.streaming.{ReadLimit, SupportsAdmissionControl}
+import org.apache.spark.sql.execution.streaming.{Offset, SerializedOffset, Source}
 import org.apache.spark.sql.hudi.streaming.HoodieSourceOffset.INIT_OFFSET
 import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.{DataFrame, SQLContext}
 
+import scala.util.Try
+
 /**
-  * The Struct Stream Source for Hudi to consume the data by streaming job.
-  * @param sqlContext
-  * @param metadataPath
-  * @param schemaOption
-  * @param parameters
-  */
+ * The Struct Stream Source for Hudi to consume the data by streaming job.
+ * @param sqlContext
+ * @param metadataPath
+ * @param schemaOption
+ * @param parameters
+ */
 class HoodieStreamSource(
-    sqlContext: SQLContext,
-    metadataPath: String,
-    schemaOption: Option[StructType],
-    parameters: Map[String, String],
-    offsetRangeLimit: HoodieOffsetRangeLimit)
-  extends Source with Logging with Serializable with SparkAdapterSupport {
+                          sqlContext: SQLContext,
+                          metadataPath: String,
+                          schemaOption: Option[StructType],
+                          parameters: Map[String, String],
+                          offsetRangeLimit: HoodieOffsetRangeLimit)
+  extends SupportsAdmissionControl with Source with Logging with Serializable with SparkAdapterSupport {
 
   @transient private val storageConf = HadoopFSUtils.getStorageConf(
     sqlContext.sparkSession.sessionState.newHadoopConf())
@@ -85,6 +89,15 @@ class HoodieStreamSource(
       .map(HollowCommitHandling.valueOf)
       .getOrElse(HollowCommitHandling.BLOCK)
 
+  @volatile private var lastKnownStartOffset: Option[HoodieSourceOffset] = None
+
+  val maxCommitsPerBatch: Option[Int] = parameters.get(SPARK_STREAMING_LIMIT_NUM_INSTANTS.key()).map { str =>
+    Try(str.toInt).toOption.filter(_ > 0).getOrElse {
+      throw new IllegalArgumentException(
+        s"Invalid value '$str' for option 'maxCommitsPerTrigger', must be a positive integer")
+    }
+  }
+
   @transient private lazy val initialOffsets = {
     val metadataLog = new HoodieMetadataLog(sqlContext.sparkSession, metadataPath)
     metadataLog.get(0).getOrElse {
@@ -116,28 +129,69 @@ class HoodieStreamSource(
   private def getLatestOffset: Option[HoodieSourceOffset] = {
     metaClient.reloadActiveTimeline()
     val filteredTimeline = handleHollowCommitIfNeeded(
-      metaClient.getActiveTimeline.filterCompletedInstants(), metaClient, hollowCommitHandling)
+      metaClient.getActiveTimeline.filterCompletedInstants(),
+      metaClient,
+      hollowCommitHandling
+    )
+
     filteredTimeline match {
       case activeInstants if !activeInstants.empty() =>
-        val timestamp = if (hollowCommitHandling == USE_TRANSITION_TIME) {
-          activeInstants.getInstantsOrderedByStateTransitionTime
-            .skip(activeInstants.countInstants() - 1)
-            .findFirst()
-            .get()
-            .getStateTransitionTime
-        } else {
-          activeInstants.lastInstant().get().getTimestamp
-        }
+        val timestamp = activeInstants.lastInstant().get().getTimestamp
         Some(HoodieSourceOffset(timestamp))
-      case _ =>
-        None
+      case _ => None
     }
   }
 
+  override def getDefaultReadLimit: ReadLimit = {
+    maxCommitsPerBatch.map(new ReadMaxCommits(_)).getOrElse(super.getDefaultReadLimit)
+  }
+
+  def latestOffset(startOffset: org.apache.spark.sql.connector.read.streaming.Offset, limit: ReadLimit): Offset = {
+    metaClient.reloadActiveTimeline()
+    val filteredTimeline = handleHollowCommitIfNeeded(
+      metaClient.getActiveTimeline.filterCompletedInstants(),
+      metaClient,
+      hollowCommitHandling
+    )
+    if (limit == ReadLimit.allAvailable() || limit.isInstanceOf[ReadMaxCommits]) {
+      filteredTimeline match {
+        case activeInstants if !activeInstants.empty() =>
+          val timestamp = if (limit == ReadLimit.allAvailable()) {
+            activeInstants.lastInstant().get().getTimestamp
+          } else {
+            // rate limit enabled.
+            val maxCommitsToRead = limit.asInstanceOf[ReadMaxCommits].maxCommits()
+            logInfo("Rate limit enabled with max commits as " + maxCommitsToRead)
+            if (startOffset == null) {
+              val commitsAfterStart = filteredTimeline.findInstantsAfter("0000000000000", maxCommitsToRead)
+              commitsAfterStart.lastInstant().get().getTimestamp
+            } else {
+              val startHoodieSourceOffset =  startOffset.asInstanceOf[HoodieSourceOffset]
+              val commitsAfterStart = filteredTimeline.findInstantsAfter(startHoodieSourceOffset.commitTime,
+                maxCommitsToRead.asInstanceOf[Integer])
+              if (commitsAfterStart.lastInstant().isPresent) {
+                commitsAfterStart.lastInstant().get().getTimestamp
+              } else {
+                startHoodieSourceOffset.commitTime
+              }
+            }
+          }
+          HoodieSourceOffset(timestamp)
+        case _ => INIT_OFFSET
+      }
+    } else {
+      logError("Wrong instance of RateLimit passed")
+      throw new HoodieException("Wrong instance of RateLimit passed " + limit + ". Expected type "
+        + classOf[ReadMaxCommits].getClass.getName)
+    }
+  }
+
+  //override def reportLatestOffset: Offset = null
+
   /**
-    * Get the latest offset from the hoodie table.
-    * @return
-    */
+   * Get the latest offset from the hoodie table.
+   * @return
+   */
   override def getOffset: Option[Offset] = {
     getLatestOffset
   }
@@ -145,7 +199,11 @@ class HoodieStreamSource(
   override def getBatch(start: Option[Offset], end: Offset): DataFrame = {
     val startOffset = start.map(HoodieSourceOffset(_))
       .getOrElse(initialOffsets)
+    lastKnownStartOffset = Option.apply(HoodieSourceOffset(startOffset))
     val endOffset = HoodieSourceOffset(end)
+
+    val metadataLog = new HoodieMetadataLog(sqlContext.sparkSession, metadataPath)
+    val latestOffset2 = metadataLog.getLatest().map(_._2.asInstanceOf[HoodieSourceOffset])
 
     if (startOffset == endOffset) {
       sqlContext.internalCreateDataFrame(
@@ -197,6 +255,7 @@ class HoodieStreamSource(
   }
 
   override def stop(): Unit = {
-
+    logInfo("Stopping Streaming source")
   }
 }
+

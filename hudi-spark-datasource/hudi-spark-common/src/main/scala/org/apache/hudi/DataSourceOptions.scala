@@ -216,6 +216,12 @@ object DataSourceReadOptions {
     .markAdvanced()
     .withDocumentation("When doing an incremental query whether we should fall back to full table scans if file does not exist.")
 
+  val SPARK_STREAMING_LIMIT_NUM_INSTANTS: ConfigProperty[String] = ConfigProperty
+    .key("hoodie.spark.streaming.read.incr.limit.num.instants")
+    .defaultValue("-1")
+    .markAdvanced()
+    .withDocumentation("When doing an incremental query limit number of instants to return. Default is -1 to return all instants")
+
   val SCHEMA_EVOLUTION_ENABLED: ConfigProperty[java.lang.Boolean] = HoodieCommonConfig.SCHEMA_EVOLUTION_ENABLE
 
   val INCREMENTAL_READ_HANDLE_HOLLOW_COMMIT: ConfigProperty[String] = HoodieCommonConfig.INCREMENTAL_READ_HANDLE_HOLLOW_COMMIT
