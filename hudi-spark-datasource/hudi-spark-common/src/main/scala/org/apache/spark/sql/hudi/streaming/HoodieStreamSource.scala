@@ -35,7 +35,7 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.connector.read.streaming
 import org.apache.spark.sql.connector.read.streaming.{ReadLimit, SupportsAdmissionControl}
-import org.apache.spark.sql.execution.streaming.{Offset, Source}
+import org.apache.spark.sql.execution.streaming.{Offset, SerializedOffset, Source}
 import org.apache.spark.sql.hudi.streaming.HoodieSourceOffset.INIT_OFFSET
 import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.StructType
@@ -163,7 +163,6 @@ class HoodieStreamSource(
       hollowCommitHandling
     )
     if (limit == ReadLimit.allAvailable() || limit.isInstanceOf[ReadMaxCommits]) {
-      val startHoodieSourceOffset = startOffset.asInstanceOf[HoodieSourceOffset]
       filteredTimeline match {
         case activeInstants if !activeInstants.empty() =>
           val timestamp = if (limit == ReadLimit.allAvailable()) {
@@ -172,16 +171,26 @@ class HoodieStreamSource(
             // rate limit enabled.
             val maxCommitsToRead = limit.asInstanceOf[ReadMaxCommits].maxCommits()
             logInfo("Rate limit enabled with max commits as " + maxCommitsToRead)
-            val commitsAfterStart = filteredTimeline.findInstantsAfter(startHoodieSourceOffset.commitTime,
-              maxCommitsToRead.asInstanceOf[Integer])
-            commitsAfterStart.lastInstant().get().getTimestamp
+            if (startOffset == null) {
+              val commitsAfterStart = filteredTimeline.findInstantsAfter("0000000000000", maxCommitsToRead)
+              commitsAfterStart.lastInstant().get().getTimestamp
+            } else {
+              val startHoodieSourceOffset =  startOffset.asInstanceOf[HoodieSourceOffset]
+              val commitsAfterStart = filteredTimeline.findInstantsAfter(startHoodieSourceOffset.commitTime,
+                maxCommitsToRead.asInstanceOf[Integer])
+              if (commitsAfterStart.lastInstant().isPresent) {
+                commitsAfterStart.lastInstant().get().getTimestamp
+              } else {
+                startHoodieSourceOffset.commitTime
+              }
+            }
           }
           HoodieSourceOffset(timestamp)
         case _ => INIT_OFFSET
       }
     } else {
       logError("Wrong instance of RateLimit passed")
-      throw new HoodieException("Wrong instance of RateLimit passed " + limit+ ". Expected type "
+      throw new HoodieException("Wrong instance of RateLimit passed " + limit + ". Expected type "
         + classOf[ReadMaxCommits].getClass.getName)
     }
   }

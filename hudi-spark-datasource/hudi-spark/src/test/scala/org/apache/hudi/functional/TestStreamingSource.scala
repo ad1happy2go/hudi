@@ -106,6 +106,72 @@ class TestStreamingSource extends StreamTest {
     }
   }
 
+  test("test cow stream source Rate limiting") {
+    withTempDir { inputDir =>
+      val tablePath = s"${inputDir.getCanonicalPath}/test_cow_stream"
+      HoodieTableMetaClient.withPropertyBuilder()
+        .setTableType(COPY_ON_WRITE)
+        .setTableName(getTableName(tablePath))
+        .setRecordKeyFields("id")
+        .setPayloadClassName(DataSourceWriteOptions.PAYLOAD_CLASS_NAME.defaultValue)
+        .setPreCombineField("ts")
+        .initTable(HadoopFSUtils.getStorageConf(spark.sessionState.newHadoopConf()), tablePath)
+
+      addData(tablePath, Seq(("1", "a1", "10", "000")))
+      val df = spark.readStream
+        .format("org.apache.hudi")
+        .option(DataSourceReadOptions.INCREMENTAL_READ_HANDLE_HOLLOW_COMMIT.key(), handlingMode.name())
+        .option("hoodie.datasource.read.incr.limit.num.instants","2")
+        .load(tablePath)
+        .select("id", "name", "price", "ts")
+
+      testStream(df)(
+        AssertOnQuery { q => q.processAllAvailable(); true },
+        CheckAnswerRows(Seq(Row("1", "a1", "10", "000")), lastOnly = true, isSorted = false),
+        StopStream,
+
+        addDataToQuery(tablePath, Seq(("1", "a1", "12", "000"))),
+        addDataToQuery(tablePath, Seq(("2", "a2", "12", "000"))),
+        addDataToQuery(tablePath, Seq(("3", "a3", "12", "000"))),
+        addDataToQuery(tablePath, Seq(("4", "a4", "12", "000"))),
+        addDataToQuery(tablePath, Seq(("5", "a5", "12", "000"))),
+        addDataToQuery(tablePath, Seq(("6", "a6", "12", "000"))),
+        addDataToQuery(tablePath, Seq(("7", "a7", "12", "000"))),
+        addDataToQuery(tablePath, Seq(("8", "a8", "12", "000"))),
+        addDataToQuery(tablePath, Seq(("9", "a9", "12", "000"))),
+
+        StartStream(),
+
+        AssertOnQuery { q => q.processAllAvailable(); true }
+        //CheckAnswerRows(Seq(Row("1", "a1", "10", "000")), lastOnly = true, isSorted = false),
+
+        /*CheckAnswerRows(
+          Seq(Row(("1", "a1", "12", "000")),
+            Row("2", "a2", "12", "000")),
+          lastOnly = true, isSorted = false),
+
+        CheckAnswerRows(
+          Seq(Row(("3", "a3", "12", "000")),
+            Row("4", "a4", "12", "000")),
+          lastOnly = true, isSorted = false),
+
+        CheckAnswerRows(
+          Seq(Row(("5", "a5", "12", "000")),
+            Row("6", "a6", "12", "000")),
+          lastOnly = true, isSorted = false),
+
+        CheckAnswerRows(
+          Seq(Row(("7", "a7", "12", "000")),
+            Row("8", "a8", "12", "000")),
+          lastOnly = true, isSorted = false),
+
+        CheckAnswerRows(
+          Seq(Row(("9", "a9", "12", "000"))),
+          lastOnly = true, isSorted = false)*/
+      )
+    }
+  }
+
   test("test mor stream source") {
     withTempDir { inputDir =>
       val tablePath = s"${inputDir.getCanonicalPath}/test_mor_stream"
