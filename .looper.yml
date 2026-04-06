@@ -1,0 +1,79 @@
+envs:
+  global:
+    variables:
+      ALLOW_ARTIFACTORY: true
+      LANG: en_US.UTF-8
+      MAVEN_ARTIFACT_ID: "bfd-apache-hudi"
+tools:
+  jdk:
+    flavor: azul
+    version: 8
+  maven: 3.9.1
+    
+triggers:
+  - manual:
+      name: Build Snapshot
+      call: snapshot
+  - manual:
+      name: Release Build
+      call: release
+      
+scheduling: cancelRunning
+flows:
+  default:
+    - call: snapshot
+  build:
+    - exposeVars(maven)
+    - var(RELEASE_VERSION = '%{MAVEN_VERSION.replace("-SNAPSHOT", "")}')
+    - echo ${RELEASE_VERSION}
+    - (name Project information) echo "Building ${MAVEN_GROUP_ID}:${MAVEN_ARTIFACT_ID}:${MAVEN_VERSION}"
+    - (name Build Maven clean package) mvn clean install -B -DskipTests -Dmaven.javadoc.skip=true -Dcheckstyle.skip -Dspark3.3 -Dscala-2.12 -Dversion=${RELEASE_VERSION} -DartifactId=hudi-spark3.3-bundle_2.12 -Dpackaging=jar 
+    - ls -la -R 
+    - ls -la -R ~/.m2/
+  snapshot:
+    - exposeVars(maven)
+    - var(RELEASE_VERSION = '%{MAVEN_VERSION.replace("-SNAPSHOT", "")}')
+    - echo ${RELEASE_VERSION}
+    - (name Project information) echo "Building ${MAVEN_GROUP_ID}:${MAVEN_ARTIFACT_ID}:${MAVEN_VERSION}"
+    - (name Build Maven clean package) mvn clean install -B -DskipTests -Dmaven.javadoc.skip=true -Dcheckstyle.skip -Dspark3.3 -Dscala-2.12 -Dversion=0.14.0.1 -DartifactId=${MAVEN_ARTIFACT_ID} -Dpackaging=jar 
+    - pwd
+    - ls -ltR /mnt/looper/workspace/bfdms/bfd-apache-hudi
+    - find . -name hudi-spark*-bundle_*-*.jar
+    - find . -name bfd-apache-hudi*.jar
+    - (name snapshot Maven clean package) mvn -B -X deploy:deploy-file -DgeneratePom=true -DskipTests -Dmaven.javadoc.skip=true -Dcheckstyle.skip -Dspark3.3 -Dscala-2.12 -Dversion=${RELEASE_VERSION} -DartifactId=${MAVEN_ARTIFACT_ID} -Dpackaging=jar -Dfile=/mnt/looper/workspace/bfdms/bfd-apache-hudi/main/ws/packaging/hudi-spark-bundle/target/hudi-spark3.3-bundle_2.12-${MAVEN_VERSION}.jar -Durl=https://mvn.ci.artifacts.walmart.com/artifactory/labsbfd-mvn-snapshots-local -DrepositoryId="af-snapshot" -DgroupId=${MAVEN_GROUP_ID}
+
+  release:
+    - echo "Running build for $GITHUB_PR_URL"
+    - exposeVars(maven)
+    - var(RELEASE_VERSION = '%{MAVEN_VERSION.replace("-SNAPSHOT", "")}')
+    - group (Checking variable):
+      - echo " Maven group id = ${MAVEN_GROUP_ID}"
+      - echo " Maven artifact id = ${MAVEN_ARTIFACT_ID}"
+      - echo " Maven version id = ${MAVEN_VERSION}"
+    - (name Project information) echo "Building ${MAVEN_GROUP_ID}:${MAVEN_ARTIFACT_ID}:${MAVEN_VERSION}"
+    - (name Build Maven clean package) mvn clean install -B -DskipTests -Dmaven.javadoc.skip=true -Dcheckstyle.skip -Dspark3.3 -Dscala-2.12 -Dversion=${RELEASE_VERSION} -DartifactId=hudi-spark3.3-bundle_2.12 -Dpackaging=jar 
+    - pwd
+    - ls -l ./packaging/hudi-spark-bundle/target/${MAVEN_ARTIFACT_ID}-${MAVEN_VERSION}.jar
+    - ls -l /mnt/jenkinspan/.m2/repository/org/apache/hudi/${MAVEN_ARTIFACT_ID}/${MAVEN_VERSION}/${MAVEN_ARTIFACT_ID}-${MAVEN_VERSION}.jar
+    - echo "Starting release process for ${RELEASE_VERSION}"
+    - (name release Maven clean package) mvn -B -X deploy:deploy-file -DgeneratePom=true -DskipTests -Dmaven.javadoc.skip=true -Dcheckstyle.skip -Dspark3.3 -Dscala-2.12 -Dversion=${RELEASE_VERSION} -DartifactId=hudi-spark3.3-bundle_2.12 -Dpackaging=jar -Dfile=./packaging/hudi-spark-bundle/target/${MAVEN_ARTIFACT_ID}-${MAVEN_VERSION}.jar -Durl=https://mvn.ci.artifacts.walmart.com/artifactory/labsbfd-mvn -DrepositoryId="af-release" -DgroupId=${MAVEN_GROUP_ID}
+
+branches:
+  - spec: main
+    triggers:
+      - push:
+          ignoreMessage: ^((?!Merge pull request).)*$
+          call: build
+  - spec: release-*
+    triggers:
+      - push:
+          ignoreMessage: ^((?!Merge pull request).)*$
+          call: snapshot
+      - pr:
+          disabled: true
+          manualOnly: true
+  - spec: feature/*
+    triggers:
+      - push:
+          ignoreMessage: ^((?!\[BFD-CI\]).)*$
+          call: release

@@ -19,12 +19,12 @@
   <parent>
     <artifactId>hudi-spark-datasource</artifactId>
     <groupId>org.apache.hudi</groupId>
-    <version>0.15.0</version>
+    <version>0.15.0.3</version>
   </parent>
   <modelVersion>4.0.0</modelVersion>
 
   <artifactId>hudi-spark_${scala.binary.version}</artifactId>
-  <version>0.15.0</version>
+  <version>0.15.0.3</version>
 
   <name>hudi-spark_${scala.binary.version}</name>
   <packaging>jar</packaging>
@@ -139,10 +139,12 @@
           <tagsToExclude>org.apache.hudi.functional.SparkSQLCoreFlow</tagsToExclude>
         </configuration>
       </plugin>
+    <!--
       <plugin>
         <groupId>org.scalastyle</groupId>
         <artifactId>scalastyle-maven-plugin</artifactId>
       </plugin>
+    -->
       <plugin>
         <groupId>org.jacoco</groupId>
         <artifactId>jacoco-maven-plugin</artifactId>
