@@ -5,7 +5,7 @@
     <parent>
         <groupId>io.trino</groupId>
         <artifactId>trino-root</artifactId>
-        <version>472</version>
+        <version>478</version>
         <!-- Stop looking for the parent on local file system -->
         <relativePath />
     </parent>
@@ -42,6 +42,7 @@
         <dependency>
             <groupId>com.google.inject</groupId>
             <artifactId>guice</artifactId>
+            <classifier>classes</classifier>
         </dependency>
 
         <dependency>
@@ -295,6 +296,8 @@
             <scope>test</scope>
         </dependency>
 
+        <!-- test-jar dependencies excluded for standalone build (not published to Maven Central) -->
+        <!--
         <dependency>
             <groupId>io.trino</groupId>
             <artifactId>trino-filesystem</artifactId>
@@ -340,6 +343,7 @@
             <type>test-jar</type>
             <scope>test</scope>
         </dependency>
+        -->
 
         <dependency>
             <groupId>io.trino</groupId>
