@@ -198,8 +198,18 @@ public class FSUtils {
     }
 
     // Partition-Path could be empty for non-partitioned tables
-    return fullPartitionPathStr.length() == basePathString.length() ? ""
-        : fullPartitionPathStr.substring(basePathString.length() + 1);
+    if (fullPartitionPathStr.length() == basePathString.length()) {
+      return "";
+    }
+
+    // When basePath is a root path (e.g., "/" from "gs://bucket/"), the trailing
+    // separator is already part of the basePath string, so we should not skip an
+    // additional character. For non-root paths like "/table", we need +1 to skip
+    // the separator between the base path and the relative portion.
+    int startIndex = basePathString.endsWith(PATH_SEPARATOR)
+        ? basePathString.length()
+        : basePathString.length() + 1;
+    return fullPartitionPathStr.substring(startIndex);
   }
 
   public static StoragePath getPathWithoutSchemeAndAuthority(StoragePath path) {

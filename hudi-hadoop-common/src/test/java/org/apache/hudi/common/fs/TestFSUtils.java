@@ -214,7 +214,11 @@ public class TestFSUtils extends HoodieCommonTestHarness {
       "/test/foo,/test/foo,",
       "/test/apache/apache,/test/apache/apache/hudi,hudi",
       "/test/apache,/test/apache/hudi,hudi",
-      "s3://test/apache,s3://test/apache/apache/hudi,apache/hudi"})
+      "s3://test/apache,s3://test/apache/apache/hudi,apache/hudi",
+      "gs://bucket/,gs://bucket/,",
+      "gs://bucket/,gs://bucket/city=sf,city=sf",
+      "gs://bucket/,gs://bucket/year=2024/month=01,year=2024/month=01",
+      "s3://bucket/,s3://bucket/partition,partition"})
   public void testGetRelativePartitionPath(String basePathStr, String partitionPathStr, String expected) {
     StoragePath basePath = new StoragePath(basePathStr);
     StoragePath partitionPath = new StoragePath(partitionPathStr);
