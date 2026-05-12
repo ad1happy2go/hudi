@@ -5,7 +5,7 @@
     <parent>
         <groupId>io.trino</groupId>
         <artifactId>trino-root</artifactId>
-        <version>480</version>
+        <version>478</version>
         <!-- Stop looking for the parent on local file system -->
         <relativePath />
     </parent>
@@ -248,6 +248,14 @@
         </dependency>
 
         <dependency>
+            <!-- Required at runtime by Hudi (HoodieAvroUtils uses GraphLayout).
+                 Provided by Trino 478's classpath (was removed in Trino 480). -->
+            <groupId>org.openjdk.jol</groupId>
+            <artifactId>jol-core</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
             <groupId>com.github.ben-manes.caffeine</groupId>
             <artifactId>caffeine</artifactId>
             <scope>runtime</scope>
@@ -274,15 +282,6 @@
         <dependency>
             <groupId>io.trino</groupId>
             <artifactId>trino-hive-formats</artifactId>
-            <scope>runtime</scope>
-        </dependency>
-
-        <dependency>
-            <!-- Required at runtime by Hudi (HoodieAvroUtils uses GraphLayout).
-                 Was provided by Trino 472 but removed from Trino 480's classpath. -->
-            <groupId>org.openjdk.jol</groupId>
-            <artifactId>jol-core</artifactId>
-            <version>0.17</version>
             <scope>runtime</scope>
         </dependency>
 
