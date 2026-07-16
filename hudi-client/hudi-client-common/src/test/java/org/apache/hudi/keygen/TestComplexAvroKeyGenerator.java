@@ -53,9 +53,9 @@ public class TestComplexAvroKeyGenerator {
     String rowKey = record.get(recordKeyFieldName).toString();
     String partitionPath = record.get("timestamp").toString();
     HoodieKey hoodieKey = compositeKeyGenerator.getKey(record);
-    // Table version 8 may use new encoding config if set
-    String expectedRecordKey = setNewEncodingConfig && encodeSingleKeyFieldValueOnly
-              ?  rowKey : recordKeyFieldName + ":" + rowKey;
+    // New encoding (bare value) is the default; field:value only when the config is explicitly false
+    String expectedRecordKey = setNewEncodingConfig && !encodeSingleKeyFieldValueOnly
+              ? recordKeyFieldName + ":" + rowKey : rowKey;
     assertEquals(expectedRecordKey, hoodieKey.getRecordKey());
     assertEquals(partitionPath, hoodieKey.getPartitionPath());
   }

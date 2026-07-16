@@ -969,6 +969,8 @@ class TestCreateTable extends HoodieSparkSqlTestBase {
           .option(
             HoodieWriteConfig.COMPLEX_KEYGEN_NEW_ENCODING.key,
             encodeSingleKeyFieldValue.toString)
+          // Disable auto-deduction so the explicitly configured encoding takes effect on this new table
+          .option(HoodieWriteConfig.COMPLEX_KEYGEN_AUTO_DEDUCE_ENCODING.key, "false")
           .option(HoodieWriteConfig.ENABLE_COMPLEX_KEYGEN_VALIDATION.key, "false")
           .mode(SaveMode.Overwrite)
           .save(tablePath)

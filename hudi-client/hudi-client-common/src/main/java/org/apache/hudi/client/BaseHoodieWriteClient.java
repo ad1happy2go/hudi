@@ -78,6 +78,7 @@ import org.apache.hudi.internal.schema.convert.AvroInternalSchemaConverter;
 import org.apache.hudi.internal.schema.io.FileBasedInternalSchemaStorageManager;
 import org.apache.hudi.internal.schema.utils.AvroSchemaEvolutionUtils;
 import org.apache.hudi.internal.schema.utils.InternalSchemaUtils;
+import org.apache.hudi.keygen.KeyGenUtils;
 import org.apache.hudi.internal.schema.utils.SerDeHelper;
 import org.apache.hudi.metadata.HoodieTableMetadataUtil;
 import org.apache.hudi.metadata.HoodieTableMetadataWriter;
@@ -1320,6 +1321,12 @@ public abstract class BaseHoodieWriteClient<T, I, K, O> extends BaseHoodieClient
     // Validate table properties
     validateTableProperties(metaClient.getTableConfig(), config.getProps());
 
+    // Handle complex key generator with a single record key field (HUDI-9666 / HUDI-7001).
+    // For such tables the record-key encoding (field:value vs value) can differ across releases;
+    // auto-deduce the encoding from existing data (or default to the new encoding for new tables)
+    // and pin it for this write so upserts keep matching existing records.
+    handleComplexKeygenEncoding(metaClient);
+
     switch (operationType) {
       case INSERT:
       case INSERT_PREPPED:
@@ -1340,6 +1347,45 @@ public abstract class BaseHoodieWriteClient<T, I, K, O> extends BaseHoodieClient
     }
 
     return table;
+  }
+
+  /**
+   * Handles the record-key encoding for a complex key generator with a single record key field
+   * (HUDI-9666 / HUDI-7001). When auto-deduce is enabled (default), the encoding is read from the
+   * cached aux file or deduced from existing data (defaulting to the new encoding for new tables),
+   * then pinned on the write config. When auto-deduce is disabled, the legacy validation guard runs.
+   */
+  private void handleComplexKeygenEncoding(HoodieTableMetaClient metaClient) {
+    HoodieTableConfig tableConfig = metaClient.getTableConfig();
+    if (!KeyGenUtils.isComplexKeyGeneratorWithSingleRecordKeyField(tableConfig)) {
+      return;
+    }
+    if (config.autoDeduceComplexKeygenEncoding()) {
+      if (!tableConfig.populateMetaFields()) {
+        // Auto-deduction reads the stored _hoodie_record_key meta field, which is absent when meta
+        // fields are disabled (virtual keys). The encoding cannot be deduced from data in that case,
+        // so leave the configured encoding (hoodie.write.complex.keygen.new.encoding) untouched.
+        LOG.warn("Skipping complex key encoding auto-deduction for table {} because meta fields are "
+            + "disabled (virtual keys); relying on the configured {}.", metaClient.getBasePath(),
+            HoodieWriteConfig.COMPLEX_KEYGEN_NEW_ENCODING.key());
+        return;
+      }
+      Option<Boolean> cachedEncoding = KeyGenUtils.readComplexKeyEncodingFromAuxFile(
+          metaClient.getStorage(), metaClient.getBasePath().toString());
+      if (cachedEncoding.isPresent()) {
+        config.setValue(HoodieWriteConfig.COMPLEX_KEYGEN_NEW_ENCODING, String.valueOf(cachedEncoding.get()));
+        LOG.info("Using cached complex key encoding from aux file: {}", cachedEncoding.get());
+      } else {
+        String recordKeyField = tableConfig.getRecordKeyFields().get()[0];
+        boolean deducedEncoding = KeyGenUtils.deduceComplexKeyEncodingFromData(metaClient, recordKeyField);
+        KeyGenUtils.writeComplexKeyEncodingToAuxFile(
+            metaClient.getStorage(), metaClient.getBasePath().toString(), deducedEncoding);
+        config.setValue(HoodieWriteConfig.COMPLEX_KEYGEN_NEW_ENCODING, String.valueOf(deducedEncoding));
+        LOG.info("Deduced and cached complex key encoding: {}", deducedEncoding);
+      }
+    } else if (config.enableComplexKeygenValidation()) {
+      throw new HoodieException(KeyGenUtils.getComplexKeygenErrorMessage("ingestion"));
+    }
   }
 
   /**
@@ -1410,7 +1456,10 @@ public abstract class BaseHoodieWriteClient<T, I, K, O> extends BaseHoodieClient
         throw new HoodieException("Only simple, non-partitioned or complex key generator are supported when meta-fields are disabled. Used: " + keyGenClass);
       }
     }
-    if (config.enableComplexKeygenValidation()
+    // When auto-deduce is enabled (default), the encoding is resolved from existing data in
+    // handleComplexKeygenEncoding instead of failing the write here (HUDI-9666 / HUDI-7001).
+    if (!config.autoDeduceComplexKeygenEncoding()
+        && config.enableComplexKeygenValidation()
         && isComplexKeyGeneratorWithSingleRecordKeyField(tableConfig)) {
       throw new HoodieException(getComplexKeygenErrorMessage("ingestion"));
     }

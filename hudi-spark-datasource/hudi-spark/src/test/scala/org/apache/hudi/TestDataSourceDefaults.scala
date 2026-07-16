@@ -437,10 +437,10 @@ class TestDataSourceDefaults extends ScalaAssertionSupport {
     {
       baseRecord.put("name", "value1")
       baseRecord.put("field1", "value2")
-      // Default: encode record key field name if there is a single record key field
+      // Default: new encoding (bare value, no field-name prefix) for a single record key field
       val keyGen = new ComplexKeyGenerator(getKeyConfig("name,", "field1,", "false"))
 
-      val expectedKey = new HoodieKey("name:value1", "value2")
+      val expectedKey = new HoodieKey("value1", "value2")
 
       assertEquals(expectedKey, keyGen.getKey(baseRecord))
 

@@ -64,6 +64,11 @@ public enum KeyGeneratorType {
     return names;
   }
 
+  /**
+   * @param config the table/write config of interest.
+   * @return true if the configured key generator is the complex key generator
+   *     (Avro or Spark variant), false otherwise.
+   */
   public static boolean isComplexKeyGenerator(HoodieConfig config) {
     if (config.contains(KEY_GENERATOR_CLASS_NAME)) {
       try {
