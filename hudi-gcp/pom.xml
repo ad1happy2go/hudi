@@ -61,10 +61,27 @@ See https://github.com/GoogleCloudPlatform/cloud-opensource-java/wiki/The-Google
       <artifactId>hudi-sync-common</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- GCSStorageLockClient (StorageBasedLockProvider backport) lives here and
+         implements the StorageLockClient contract from hudi-client-common. -->
+    <dependency>
+      <groupId>org.apache.hudi</groupId>
+      <artifactId>hudi-client-common</artifactId>
+      <version>${project.version}</version>
+    </dependency>
 
     <dependency>
       <groupId>com.google.cloud</groupId>
       <artifactId>google-cloud-bigquery</artifactId>
+    </dependency>
+
+    <!-- Conditional (generation-match) writes for the storage-based lock. Pinned past this
+         module's libraries-bom 25.1.0 (which resolves 2.6.0 — no generationMatch(long), no
+         Storage.close()) to the same 2.22.2 the 0.15.1.x patched build resolves via
+         libraries-bom 26.15.0, so both writer versions run the identical GCS SDK. -->
+    <dependency>
+      <groupId>com.google.cloud</groupId>
+      <artifactId>google-cloud-storage</artifactId>
+      <version>2.22.2</version>
     </dependency>
 
     <dependency>
