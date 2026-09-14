@@ -81,6 +81,8 @@ import org.apache.hudi.internal.schema.io.FileBasedInternalSchemaStorageManager;
 import org.apache.hudi.internal.schema.utils.AvroSchemaEvolutionUtils;
 import org.apache.hudi.internal.schema.utils.InternalSchemaUtils;
 import org.apache.hudi.internal.schema.utils.SerDeHelper;
+import org.apache.hudi.keygen.KeyGenUtils;
+import org.apache.hudi.keygen.constant.ComplexKeyGenEncoding;
 import org.apache.hudi.keygen.constant.KeyGeneratorType;
 import org.apache.hudi.metadata.HoodieTableMetadataUtil;
 import org.apache.hudi.metadata.HoodieTableMetadataWriter;
@@ -1385,6 +1387,8 @@ public abstract class BaseHoodieWriteClient<T, I, K, O> extends BaseHoodieClient
     }
 
     doInitTable(operationType, metaClient, instantTime);
+    // Resolve the complex key generator record key encoding before table creation (HUDI-9666 / HUDI-7001)
+    resolveComplexKeygenEncoding(metaClient);
     HoodieTable table = createTable(config, metaClient);
 
     // Validate table properties
@@ -1412,6 +1416,36 @@ public abstract class BaseHoodieWriteClient<T, I, K, O> extends BaseHoodieClient
     return table;
   }
 
+  /**
+   * Resolves the record key encoding of a single-field {@code ComplexKeyGenerator} table onto the write config,
+   * so that every key generator built from it keys records the way the table's existing data is keyed.
+   *
+   * <p>Only meaningful at table version 9 and above, where the encoding is known: the property persisted by the
+   * 8 to 9 upgrade ({@link HoodieTableConfig#COMPLEX_KEYGEN_ENCODING}), or the version-9 default
+   * ({@link ComplexKeyGenEncoding#FIELD_PREFIXED}) for tables created there. Below version 9 the encoding is a
+   * per-write decision driven by {@code hoodie.write.complex.keygen.new.encoding}, guarded by
+   * {@code hoodie.write.complex.keygen.validation.enable}.
+   * Public because the streamer keys its records before {@link #initTable} runs and has to call this itself.
+   */
+  public void resolveComplexKeygenEncoding(HoodieTableMetaClient metaClient) {
+    HoodieTableConfig tableConfig = metaClient.getTableConfig();
+    if (!KeyGenUtils.isComplexKeyGeneratorWithSingleRecordKeyField(tableConfig)) {
+      return;
+    }
+    Option<ComplexKeyGenEncoding> knownEncoding = KeyGenUtils.resolveComplexKeyGenEncoding(tableConfig);
+    if (!knownEncoding.isPresent()) {
+      return;
+    }
+    String configured = config.getString(HoodieTableConfig.COMPLEX_KEYGEN_ENCODING);
+    if (!StringUtils.isNullOrEmpty(configured) && !configured.trim().equalsIgnoreCase(knownEncoding.get().name())) {
+      LOG.warn("Ignoring {}={} from the write config: table {} is at version {} and carries {} record keys.",
+          HoodieTableConfig.COMPLEX_KEYGEN_ENCODING.key(), configured, metaClient.getBasePath(),
+          tableConfig.getTableVersion(), knownEncoding.get());
+    }
+    config.setValue(HoodieTableConfig.COMPLEX_KEYGEN_ENCODING, knownEncoding.get().name());
+    config.setValue(HoodieWriteConfig.COMPLEX_KEYGEN_NEW_ENCODING, String.valueOf(knownEncoding.get().useNewEncoding()));
+  }
+
   public void validateAgainstTableProperties(HoodieTableConfig tableConfig, HoodieWriteConfig writeConfig) {
     // mismatch of table versions.
     CommonClientUtils.validateTableVersion(tableConfig, writeConfig);
@@ -1434,6 +1468,10 @@ public abstract class BaseHoodieWriteClient<T, I, K, O> extends BaseHoodieClient
         throw new HoodieException("Only simple, non-partitioned or complex key generator are supported when meta-fields are disabled. Used: " + keyGenClass);
       }
     }
+    // Below table version 9 the record key encoding of a single-field complex keygen table is a per-write
+    // decision that is never recorded, so a writer cannot tell what the existing data carries. Fail loud
+    // rather than silently writing with a possibly-wrong encoding. From version 9 on the encoding is known
+    // (the table property stamped by the 8 to 9 upgrade, or the version-9 default), so no guard is needed.
     if (tableConfig.getTableVersion().lesserThan(HoodieTableVersion.NINE)
             && config.enableComplexKeygenValidation()
             && isComplexKeyGeneratorWithSingleRecordKeyField(tableConfig)) {
