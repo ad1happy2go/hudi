@@ -32,6 +32,7 @@ import org.apache.hudi.common.util.collection.Triple;
 import org.apache.hudi.configuration.FlinkOptions;
 import org.apache.hudi.configuration.HadoopConfigurations;
 import org.apache.hudi.hadoop.fs.HadoopFSUtils;
+import org.apache.hudi.keygen.ComplexAvroKeyGenerator;
 import org.apache.hudi.keygen.SimpleAvroKeyGenerator;
 import org.apache.hudi.util.StreamerUtil;
 
@@ -199,5 +200,17 @@ class TestStreamerUtil {
       assertTrue(StreamerUtil.tableExists(basePath, HadoopConfigurations.getHadoopConf(conf)));
     }
   }
-}
 
+  @Test
+  void testCheckKeygenGeneratorDefaultsComplexKeygenEncoding() {
+    Configuration keygenConf = new Configuration();
+    StreamerUtil.checkKeygenGenerator(true, keygenConf);
+    assertEquals(ComplexAvroKeyGenerator.class.getName(),
+        keygenConf.get(FlinkOptions.KEYGEN_CLASS_NAME));
+    assertEquals("FIELD_PREFIXED", keygenConf.getString(HoodieTableConfig.COMPLEX_KEYGEN_ENCODING.key(), null));
+
+    keygenConf.setString(HoodieTableConfig.COMPLEX_KEYGEN_ENCODING.key(), "VALUE_ONLY");
+    StreamerUtil.checkKeygenGenerator(true, keygenConf);
+    assertEquals("VALUE_ONLY", keygenConf.getString(HoodieTableConfig.COMPLEX_KEYGEN_ENCODING.key(), null));
+  }
+}

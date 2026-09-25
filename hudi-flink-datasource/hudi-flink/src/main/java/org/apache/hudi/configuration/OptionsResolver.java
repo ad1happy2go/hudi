@@ -39,6 +39,7 @@ import org.apache.hudi.config.HoodieWriteConfig;
 import org.apache.hudi.exception.HoodieException;
 import org.apache.hudi.index.HoodieIndex;
 import org.apache.hudi.index.bucket.partition.PartitionBucketIndexUtils;
+import org.apache.hudi.keygen.constant.ComplexKeyGenEncoding;
 import org.apache.hudi.keygen.constant.KeyGeneratorOptions;
 import org.apache.hudi.sink.overwrite.PartitionOverwriteMode;
 import org.apache.hudi.table.format.FilePathUtils;
@@ -518,6 +519,15 @@ public class OptionsResolver {
   public static boolean useComplexKeygenNewEncoding(Configuration conf) {
     return Boolean.parseBoolean(conf.getString(HoodieWriteConfig.COMPLEX_KEYGEN_NEW_ENCODING.key(),
         HoodieWriteConfig.COMPLEX_KEYGEN_NEW_ENCODING.defaultValue().toString()));
+  }
+
+  /**
+   * Returns the record key encoding of a single-field complex key generator table, when the table option
+   * {@code hoodie.table.complex.keygenerator.encoding} was set up on the job configuration.
+   */
+  public static Option<ComplexKeyGenEncoding> getComplexKeygenEncoding(Configuration conf) {
+    String encoding = conf.getString(HoodieTableConfig.COMPLEX_KEYGEN_ENCODING.key(), null);
+    return StringUtils.isNullOrEmpty(encoding) ? Option.empty() : Option.of(ComplexKeyGenEncoding.fromString(encoding));
   }
 
   // -------------------------------------------------------------------------

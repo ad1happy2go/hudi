@@ -37,6 +37,7 @@ import org.apache.hudi.common.util.Option;
 import org.apache.hudi.common.util.collection.Triple;
 import org.apache.hudi.exception.HoodieIOException;
 import org.apache.hudi.keygen.BaseKeyGenerator;
+import org.apache.hudi.keygen.constant.ComplexKeyGenEncoding;
 import org.apache.hudi.storage.HoodieStorage;
 import org.apache.hudi.storage.HoodieStorageUtils;
 import org.apache.hudi.storage.StoragePath;
@@ -360,6 +361,20 @@ class TestHoodieTableConfig extends HoodieCommonTestHarness {
     assertFalse(HoodieTableConfig.validateConfigVersion(HoodieTableConfig.INITIAL_VERSION, HoodieTableVersion.SIX));
   }
 
+  @ParameterizedTest
+  @EnumSource(value = HoodieTableVersion.class, names = {"SIX", "EIGHT", "NINE"})
+  void testComplexKeyGenEncodingSurvivesConfigVersionDropping(HoodieTableVersion tableVersion) {
+    // the property records what the table's data carries, so it is kept on every table version
+    HoodieConfig config = new HoodieConfig();
+    config.setValue(HoodieTableConfig.COMPLEX_KEYGEN_ENCODING, ComplexKeyGenEncoding.VALUE_ONLY.name());
+    config.setValue(HoodieTableConfig.VERSION, String.valueOf(tableVersion.versionCode()));
+
+    HoodieTableConfig.dropInvalidConfigs(config);
+
+    assertEquals(ComplexKeyGenEncoding.VALUE_ONLY.name(), config.getString(HoodieTableConfig.COMPLEX_KEYGEN_ENCODING),
+        "the recorded encoding must survive on a " + tableVersion + " table");
+  }
+
   @Test
   void testDropInvalidConfigs() {
     // test invalid configs are dropped
@@ -384,7 +399,7 @@ class TestHoodieTableConfig extends HoodieCommonTestHarness {
   @Test
   void testDefinedTableConfigs() {
     List<ConfigProperty<?>> configProperties = HoodieTableConfig.definedTableConfigs();
-    assertEquals(42, configProperties.size());
+    assertEquals(43, configProperties.size());
     configProperties.forEach(c -> {
       assertNotNull(c);
       assertFalse(c.doc().isEmpty());

@@ -64,6 +64,7 @@ import org.apache.hudi.common.util.collection.Triple;
 import org.apache.hudi.exception.HoodieException;
 import org.apache.hudi.exception.HoodieIOException;
 import org.apache.hudi.exception.TableNotFoundException;
+import org.apache.hudi.keygen.constant.ComplexKeyGenEncoding;
 import org.apache.hudi.keygen.constant.KeyGeneratorType;
 import org.apache.hudi.metadata.HoodieTableMetadata;
 import org.apache.hudi.storage.HoodieInstantWriter;
@@ -1069,6 +1070,7 @@ public class HoodieTableMetaClient implements Serializable {
     private String bootstrapBasePath;
     private Boolean bootstrapIndexEnable;
     private Boolean populateMetaFields;
+    private ComplexKeyGenEncoding complexKeyGenEncoding;
     private String keyGeneratorClassProp;
     private String keyGeneratorType;
     private Boolean hiveStylePartitioningEnable;
@@ -1224,6 +1226,11 @@ public class HoodieTableMetaClient implements Serializable {
 
     public TableBuilder setPopulateMetaFields(boolean populateMetaFields) {
       this.populateMetaFields = populateMetaFields;
+      return this;
+    }
+
+    public TableBuilder setComplexKeyGenEncoding(ComplexKeyGenEncoding complexKeyGenEncoding) {
+      this.complexKeyGenEncoding = complexKeyGenEncoding;
       return this;
     }
 
@@ -1416,6 +1423,9 @@ public class HoodieTableMetaClient implements Serializable {
       if (hoodieConfig.contains(HoodieTableConfig.RECORDKEY_FIELDS)) {
         setRecordKeyFields(hoodieConfig.getString(HoodieTableConfig.RECORDKEY_FIELDS));
       }
+      if (hoodieConfig.contains(HoodieTableConfig.COMPLEX_KEYGEN_ENCODING)) {
+        setComplexKeyGenEncoding(ComplexKeyGenEncoding.fromString(hoodieConfig.getString(HoodieTableConfig.COMPLEX_KEYGEN_ENCODING)));
+      }
       if (hoodieConfig.contains(HoodieTableConfig.TIMELINE_TIMEZONE)) {
         setCommitTimezone(HoodieTimelineTimeZone.valueOf(hoodieConfig.getStringOrDefault(HoodieTableConfig.TIMELINE_TIMEZONE)));
       }
@@ -1575,6 +1585,13 @@ public class HoodieTableMetaClient implements Serializable {
                 USER_PROVIDED.name()));
         KeyGeneratorType type = KeyGeneratorType.valueOf(keyGeneratorType);
         tableConfig.setValue(HoodieTableConfig.KEY_GENERATOR_TYPE, type.name());
+      }
+      if (tableConfig.isComplexKeyGenWithSingleRecordKeyField() && tableConfig.populateMetaFields()) {
+        // The property describes the record keys the table's data carries, not what the table version implies:
+        // a version 8 table storing bare values keeps VALUE_ONLY across the upgrade to 9 and above. The builder
+        // therefore records what the caller declares, defaulting to the `<field>:<value>` keys a new table gets.
+        ComplexKeyGenEncoding encoding = complexKeyGenEncoding != null ? complexKeyGenEncoding : ComplexKeyGenEncoding.FIELD_PREFIXED;
+        tableConfig.setValue(HoodieTableConfig.COMPLEX_KEYGEN_ENCODING, encoding.name());
       }
       if (null != hiveStylePartitioningEnable) {
         tableConfig.setValue(HoodieTableConfig.HIVE_STYLE_PARTITIONING_ENABLE, Boolean.toString(hiveStylePartitioningEnable));

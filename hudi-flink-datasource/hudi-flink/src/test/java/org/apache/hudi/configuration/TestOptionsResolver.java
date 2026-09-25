@@ -20,9 +20,11 @@ package org.apache.hudi.configuration;
 
 import org.apache.hudi.common.model.HoodieFailedWritesCleaningPolicy;
 import org.apache.hudi.common.model.WriteConcurrencyMode;
+import org.apache.hudi.common.table.HoodieTableConfig;
 import org.apache.hudi.config.HoodieCleanConfig;
 import org.apache.hudi.config.HoodieWriteConfig;
 import org.apache.hudi.index.HoodieIndex;
+import org.apache.hudi.keygen.constant.ComplexKeyGenEncoding;
 
 import org.apache.flink.configuration.Configuration;
 import org.junit.jupiter.api.Test;
@@ -41,6 +43,16 @@ public class TestOptionsResolver {
   @TempDir
   File tempFile;
   
+  @Test
+  void testGetComplexKeygenEncoding() {
+    Configuration conf = new Configuration();
+    assertFalse(OptionsResolver.getComplexKeygenEncoding(conf).isPresent());
+    conf.setString(HoodieTableConfig.COMPLEX_KEYGEN_ENCODING.key(), "value_only");
+    assertEquals(ComplexKeyGenEncoding.VALUE_ONLY, OptionsResolver.getComplexKeygenEncoding(conf).get());
+    conf.setString(HoodieTableConfig.COMPLEX_KEYGEN_ENCODING.key(), "FIELD_PREFIXED");
+    assertEquals(ComplexKeyGenEncoding.FIELD_PREFIXED, OptionsResolver.getComplexKeygenEncoding(conf).get());
+  }
+
   @Test
   void testGetIndexType() {
     Configuration conf = getConf();

@@ -83,6 +83,7 @@ import org.apache.hudi.hive.HiveSyncConfig;
 import org.apache.hudi.hive.HiveSyncTool;
 import org.apache.hudi.internal.schema.InternalSchema;
 import org.apache.hudi.keygen.KeyGenUtils;
+import org.apache.hudi.keygen.constant.ComplexKeyGenEncoding;
 import org.apache.hudi.keygen.factory.HoodieSparkKeyGeneratorFactory;
 import org.apache.hudi.metrics.HoodieMetrics;
 import org.apache.hudi.storage.HoodieStorage;
@@ -461,6 +462,8 @@ public class StreamSync implements Serializable, Closeable {
         .setPartitionFields(partitionColumns)
         .setTableVersion(ConfigUtils.getIntWithAltKeys(props, WRITE_TABLE_VERSION))
         .setRecordKeyFields(props.getProperty(DataSourceWriteOptions.RECORDKEY_FIELD().key()))
+        .setComplexKeyGenEncoding(props.containsKey(HoodieTableConfig.COMPLEX_KEYGEN_ENCODING.key())
+            ? ComplexKeyGenEncoding.fromString(props.getString(HoodieTableConfig.COMPLEX_KEYGEN_ENCODING.key())) : null)
         .setPopulateMetaFields(props.getBoolean(HoodieTableConfig.POPULATE_META_FIELDS.key(),
             HoodieTableConfig.POPULATE_META_FIELDS.defaultValue()))
         .setKeyGeneratorClassProp(keyGenClassName)
@@ -1105,6 +1108,7 @@ public class StreamSync implements Serializable, Closeable {
       // Close Write client.
       writeClient.close();
     }
+    KeyGenUtils.recordComplexKeygenEncodingIfMissing(metaClient, writeConfig);
     writeClient = new SparkRDDWriteClient<>(hoodieSparkContext, writeConfig, embeddedTimelineService);
     onInitializingHoodieWriteClient.apply(writeClient);
   }
