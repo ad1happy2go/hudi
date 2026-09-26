@@ -26,6 +26,7 @@ import org.apache.hudi.common.testutils.HoodieTestDataGenerator;
 import org.apache.hudi.config.HoodieCompactionConfig;
 import org.apache.hudi.config.HoodieWriteConfig;
 import org.apache.hudi.hive.HiveSyncConfig;
+import org.apache.hudi.hive.HiveSyncConfigHolder;
 import org.apache.hudi.hive.MultiPartKeysValueExtractor;
 import org.apache.hudi.hive.NonPartitionedExtractor;
 import org.apache.hudi.hive.SlashEncodedDayPartitionValueExtractor;
@@ -84,7 +85,7 @@ public class HoodieJavaApp {
   private String hiveUser = "hive";
 
   @Parameter(names = {"--hive-password", "-hp"}, description = "hive password")
-  private String hivePass = "hive";
+  private String hivePass = HiveSyncConfigHolder.HIVE_PASS.defaultValue();
 
   @Parameter(names = {"--hive-url", "-hl"}, description = "hive JDBC URL")
   private String hiveJdbcUrl = "jdbc:hive2://localhost:10000";

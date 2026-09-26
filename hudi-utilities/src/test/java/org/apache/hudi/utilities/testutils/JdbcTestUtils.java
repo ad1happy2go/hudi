@@ -35,6 +35,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 
 /**
  * Helper class used in testing {@link org.apache.hudi.utilities.sources.JdbcSource}.
@@ -46,7 +47,8 @@ public class JdbcTestUtils {
   public static final String JDBC_URL = "jdbc:h2:mem:test_mem";
   public static final String JDBC_DRIVER = "org.h2.Driver";
   public static final String JDBC_USER = "test";
-  public static final String JDBC_PASS = "jdbc";
+  // generated per JVM: the in-memory H2 database only has to agree with itself
+  public static final String JDBC_PASS = UUID.randomUUID().toString();
 
   public static List<HoodieRecord> clearAndInsert(String commitTime, int numRecords, Connection connection, HoodieTestDataGenerator dataGenerator, TypedProperties props)
       throws SQLException {

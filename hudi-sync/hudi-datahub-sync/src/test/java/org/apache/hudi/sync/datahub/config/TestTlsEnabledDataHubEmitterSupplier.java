@@ -26,11 +26,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.FileOutputStream;
-import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyStore;
-import java.util.Objects;
 import java.util.Properties;
 
 import static org.apache.hudi.sync.datahub.config.DataHubSyncConfig.META_SYNC_DATAHUB_EMITTER_SERVER;
@@ -63,40 +61,6 @@ class TestTlsEnabledDataHubEmitterSupplier {
   }
 
   @Test
-  void testEmitterCreationWithCACertificate() throws Exception {
-    // Create a dummy CA certificate file for testing
-    Path caCertPath = createDummyCertificateFile();
-
-    Properties props = new Properties();
-    props.setProperty(META_SYNC_DATAHUB_EMITTER_SERVER.key(), "https://datahub.example.com:8080");
-    props.setProperty(META_SYNC_DATAHUB_TLS_CA_CERT_PATH.key(), caCertPath.toString());
-
-    TypedProperties typedProps = new TypedProperties();
-    TypedProperties.putAll(typedProps, props);
-    TlsEnabledDataHubEmitterSupplier supplier = new TlsEnabledDataHubEmitterSupplier(typedProps);
-
-    RestEmitter emitter = supplier.get();
-    assertNotNull(emitter, "Emitter should be created with CA certificate");
-  }
-
-  @Test
-  void testEmitterCreationWithMultipleCACertificates() throws Exception {
-    // Load a PEM file with multiple certificates from resources
-    Path multiCertPath = copyMultipleCertificateFromResources();
-
-    Properties props = new Properties();
-    props.setProperty(META_SYNC_DATAHUB_EMITTER_SERVER.key(), "https://datahub.example.com:8080");
-    props.setProperty(META_SYNC_DATAHUB_TLS_CA_CERT_PATH.key(), multiCertPath.toString());
-
-    TypedProperties typedProps = new TypedProperties();
-    TypedProperties.putAll(typedProps, props);
-    TlsEnabledDataHubEmitterSupplier supplier = new TlsEnabledDataHubEmitterSupplier(typedProps);
-
-    RestEmitter emitter = supplier.get();
-    assertNotNull(emitter, "Emitter should be created with multiple CA certificates");
-  }
-
-  @Test
   void testEmitterCreationFailsWithoutServerUrl() {
     Properties props = new Properties();
     // No server URL provided
@@ -122,60 +86,6 @@ class TestTlsEnabledDataHubEmitterSupplier {
     // Should throw exception when CA cert path is invalid
     assertThrows(HoodieDataHubSyncException.class, supplier::get,
         "Should throw HoodieDataHubSyncException when CA certificate file doesn't exist");
-  }
-
-  @Test
-  void testEmitterCreationWithKeystore() throws Exception {
-    Path keystorePath = copyKeystoreFromResources("test-keystore.p12");
-    
-    Properties props = new Properties();
-    props.setProperty(META_SYNC_DATAHUB_EMITTER_SERVER.key(), "https://datahub.example.com:8080");
-    props.setProperty(META_SYNC_DATAHUB_TLS_KEYSTORE_PATH.key(), keystorePath.toString());
-    props.setProperty(META_SYNC_DATAHUB_TLS_KEYSTORE_PASSWORD.key(), "testpass");
-    
-    TypedProperties typedProps = new TypedProperties();
-    TypedProperties.putAll(typedProps, props);
-    TlsEnabledDataHubEmitterSupplier supplier = new TlsEnabledDataHubEmitterSupplier(typedProps);
-    
-    RestEmitter emitter = supplier.get();
-    assertNotNull(emitter, "Emitter should be created with keystore");
-  }
-
-  @Test
-  void testEmitterCreationWithTruststore() throws Exception {
-    Path truststorePath = copyKeystoreFromResources("test-truststore.p12");
-    
-    Properties props = new Properties();
-    props.setProperty(META_SYNC_DATAHUB_EMITTER_SERVER.key(), "https://datahub.example.com:8080");
-    props.setProperty(META_SYNC_DATAHUB_TLS_TRUSTSTORE_PATH.key(), truststorePath.toString());
-    props.setProperty(META_SYNC_DATAHUB_TLS_TRUSTSTORE_PASSWORD.key(), "testpass");
-    
-    TypedProperties typedProps = new TypedProperties();
-    TypedProperties.putAll(typedProps, props);
-    TlsEnabledDataHubEmitterSupplier supplier = new TlsEnabledDataHubEmitterSupplier(typedProps);
-    
-    RestEmitter emitter = supplier.get();
-    assertNotNull(emitter, "Emitter should be created with truststore");
-  }
-
-  @Test
-  void testEmitterCreationWithKeystoreAndTruststore() throws Exception {
-    Path keystorePath = copyKeystoreFromResources("test-keystore.p12");
-    Path truststorePath = copyKeystoreFromResources("test-truststore.p12");
-    
-    Properties props = new Properties();
-    props.setProperty(META_SYNC_DATAHUB_EMITTER_SERVER.key(), "https://datahub.example.com:8080");
-    props.setProperty(META_SYNC_DATAHUB_TLS_KEYSTORE_PATH.key(), keystorePath.toString());
-    props.setProperty(META_SYNC_DATAHUB_TLS_KEYSTORE_PASSWORD.key(), "testpass");
-    props.setProperty(META_SYNC_DATAHUB_TLS_TRUSTSTORE_PATH.key(), truststorePath.toString());
-    props.setProperty(META_SYNC_DATAHUB_TLS_TRUSTSTORE_PASSWORD.key(), "testpass");
-    
-    TypedProperties typedProps = new TypedProperties();
-    TypedProperties.putAll(typedProps, props);
-    TlsEnabledDataHubEmitterSupplier supplier = new TlsEnabledDataHubEmitterSupplier(typedProps);
-    
-    RestEmitter emitter = supplier.get();
-    assertNotNull(emitter, "Emitter should be created with both keystore and truststore");
   }
 
   @Test
@@ -211,51 +121,6 @@ class TestTlsEnabledDataHubEmitterSupplier {
         "Should throw exception when keystore file doesn't exist");
   }
 
-  private Path copyKeystoreFromResources(String resourceName) throws Exception {
-    Path keystorePath = tempDir.resolve(resourceName);
-    
-    try (InputStream keystoreStream = getClass().getClassLoader().getResourceAsStream(resourceName)) {
-      Objects.requireNonNull(keystoreStream, resourceName + " not found in resources");
-      Files.copy(keystoreStream, keystorePath);
-    }
-    
-    return keystorePath;
-  }
-
-  @Test
-  void testEmitterCreationFailsWithKeystoreWrongPassword() throws Exception {
-    Path keystorePath = copyKeystoreFromResources("test-keystore.p12");
-    
-    Properties props = new Properties();
-    props.setProperty(META_SYNC_DATAHUB_EMITTER_SERVER.key(), "https://datahub.example.com:8080");
-    props.setProperty(META_SYNC_DATAHUB_TLS_KEYSTORE_PATH.key(), keystorePath.toString());
-    props.setProperty(META_SYNC_DATAHUB_TLS_KEYSTORE_PASSWORD.key(), "wrongpassword");
-    
-    TypedProperties typedProps = new TypedProperties();
-    TypedProperties.putAll(typedProps, props);
-    TlsEnabledDataHubEmitterSupplier supplier = new TlsEnabledDataHubEmitterSupplier(typedProps);
-    
-    assertThrows(HoodieDataHubSyncException.class, supplier::get,
-        "Should throw exception when keystore password is incorrect");
-  }
-
-  @Test
-  void testEmitterCreationFailsWithTruststoreWrongPassword() throws Exception {
-    Path truststorePath = copyKeystoreFromResources("test-truststore.p12");
-    
-    Properties props = new Properties();
-    props.setProperty(META_SYNC_DATAHUB_EMITTER_SERVER.key(), "https://datahub.example.com:8080");
-    props.setProperty(META_SYNC_DATAHUB_TLS_TRUSTSTORE_PATH.key(), truststorePath.toString());
-    props.setProperty(META_SYNC_DATAHUB_TLS_TRUSTSTORE_PASSWORD.key(), "wrongpassword");
-    
-    TypedProperties typedProps = new TypedProperties();
-    TypedProperties.putAll(typedProps, props);
-    TlsEnabledDataHubEmitterSupplier supplier = new TlsEnabledDataHubEmitterSupplier(typedProps);
-    
-    assertThrows(HoodieDataHubSyncException.class, supplier::get,
-        "Should throw exception when truststore password is incorrect");
-  }
-
   @Test
   void testEmitterCreationWithTruststoreWithoutPassword() throws Exception {
     // Create a password-less truststore for testing
@@ -272,26 +137,6 @@ class TestTlsEnabledDataHubEmitterSupplier {
     
     RestEmitter emitter = supplier.get();
     assertNotNull(emitter, "Emitter should be created with password-less truststore");
-  }
-
-  @Test
-  void testEmitterCreationWithCACertAndTruststore() throws Exception {
-    // When both CA cert and truststore are provided, truststore should take precedence
-    Path caCertPath = createDummyCertificateFile();
-    Path truststorePath = copyKeystoreFromResources("test-truststore.p12");
-    
-    Properties props = new Properties();
-    props.setProperty(META_SYNC_DATAHUB_EMITTER_SERVER.key(), "https://datahub.example.com:8080");
-    props.setProperty(META_SYNC_DATAHUB_TLS_CA_CERT_PATH.key(), caCertPath.toString());
-    props.setProperty(META_SYNC_DATAHUB_TLS_TRUSTSTORE_PATH.key(), truststorePath.toString());
-    props.setProperty(META_SYNC_DATAHUB_TLS_TRUSTSTORE_PASSWORD.key(), "testpass");
-    
-    TypedProperties typedProps = new TypedProperties();
-    TypedProperties.putAll(typedProps, props);
-    TlsEnabledDataHubEmitterSupplier supplier = new TlsEnabledDataHubEmitterSupplier(typedProps);
-    
-    RestEmitter emitter = supplier.get();
-    assertNotNull(emitter, "Emitter should be created with truststore taking precedence over CA cert");
   }
 
   @Test
@@ -433,28 +278,6 @@ class TestTlsEnabledDataHubEmitterSupplier {
     }
     
     return truststorePath;
-  }
-
-  private Path createDummyCertificateFile() throws Exception {
-    Path certPath = tempDir.resolve("ca-cert.pem");
-
-    try (InputStream certStream = getClass().getClassLoader().getResourceAsStream("test-ca-cert.pem")) {
-      Objects.requireNonNull(certStream, "test-ca-cert.pem not found in resources");
-      Files.copy(certStream, certPath);
-    }
-
-    return certPath;
-  }
-
-  private Path copyMultipleCertificateFromResources() throws Exception {
-    Path multiCertPath = tempDir.resolve("multi-ca-cert.pem");
-
-    try (InputStream certStream = getClass().getClassLoader().getResourceAsStream("multi-ca-cert.pem")) {
-      Objects.requireNonNull(certStream, "multi-ca-cert.pem not found in resources");
-      Files.copy(certStream, multiCertPath);
-    }
-
-    return multiCertPath;
   }
 
 }

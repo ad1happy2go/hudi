@@ -64,22 +64,22 @@ if [[ $confirmation != "y" ]]; then
     echo "Please input you Apache account creds for checking out ${ROOT_SVN_URL} and adding your key to KEYS file"
     echo "username: "
     read apache_username
-    echo "password: "
-    read passowrd
+    read -r -s -p "Apache account credential (input hidden): " apache_credential
+    echo
     echo "======Starting updating KEYS file in dev repo===="
     if [[ -d ${LOCAL_SVN_DIR} ]]; then
       rm -rf ${LOCAL_SVN_DIR}
     fi
     mkdir ${LOCAL_SVN_DIR}
     cd ${LOCAL_SVN_DIR}
-    svn --username=${apache_username} --password=${passowrd} co ${ROOT_SVN_URL}/${DEV_REPO}/${HUDI_REPO}
+    svn --username=${apache_username} --password=${apache_credential} co ${ROOT_SVN_URL}/${DEV_REPO}/${HUDI_REPO}
     cd ${HUDI_REPO}
     (gpg --list-sigs ${name} && gpg --armor --export ${name}) >> KEYS
     svn status
     echo "Please review all changes. Do you confirm to commit? [y|N]"
     read commit_confirmation
     if [[ $commit_confirmation = "y" ]]; then
-      svn --username=${apache_username} --password=${passowrd} commit --no-auth-cache KEYS
+      svn --username=${apache_username} --password=${apache_credential} commit --no-auth-cache KEYS
     else
       echo "Not commit new changes into ${ROOT_SVN_URL}/${DEV_REPO}/${HUDI_REPO}${DEV_REPO}/KEYS"
     fi
@@ -90,14 +90,14 @@ if [[ $confirmation != "y" ]]; then
     mkdir ${LOCAL_SVN_DIR}
     cd ${LOCAL_SVN_DIR}
     echo "===Starting updating KEYS file in release repo==="
-    svn --username=${apache_username} --password=${passowrd} co ${ROOT_SVN_URL}/${RELEASE_REPO}/${HUDI_REPO}
+    svn --username=${apache_username} --password=${apache_credential} co ${ROOT_SVN_URL}/${RELEASE_REPO}/${HUDI_REPO}
     cd ${HUDI_REPO}
     (gpg --list-sigs ${name} && gpg --armor --export ${name}) >> KEYS
     svn status
     echo "Please review all changes. Do you confirm to commit? [y|N]"
     read commit_confirmation
     if [[ $commit_confirmation = "y" ]]; then
-      svn --username=${apache_username} --password=${passowrd} commit --no-auth-cache KEYS
+      svn --username=${apache_username} --password=${apache_credential} commit --no-auth-cache KEYS
     else
       echo "Not commit new changes into ${ROOT_SVN_URL}/${DEV_REPO}/${HUDI_REPO}${RELEASE_REPO}/KEYS"
     fi

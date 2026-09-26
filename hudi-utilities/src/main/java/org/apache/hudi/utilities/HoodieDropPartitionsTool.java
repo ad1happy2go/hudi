@@ -169,7 +169,7 @@ public class HoodieDropPartitionsTool implements Serializable {
     @Parameter(names = {"--hive-user-name", "-user"}, description = "hive user name to use.", required = false)
     public String hiveUserName = "hive";
     @Parameter(names = {"--hive-pass-word", "-pass"}, description = "hive password to use.", required = false)
-    public String hivePassWord = "hive";
+    public String hivePassWord = HiveSyncConfigHolder.HIVE_PASS.defaultValue();
     @Parameter(names = {"--hive-jdbc-url", "-jdbc"}, description = "hive url to use.", required = false)
     public String hiveURL = "jdbc:hive2://localhost:10000";
     @Parameter(names = {"--hive-partition-field"}, description = "Comma separated list of field in the hive table to use for determining hive partition columns.", required = false)

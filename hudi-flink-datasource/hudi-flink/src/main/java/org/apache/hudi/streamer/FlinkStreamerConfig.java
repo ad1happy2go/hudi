@@ -374,7 +374,7 @@ public class FlinkStreamerConfig extends Configuration {
   public String hiveSyncUsername = "hive";
 
   @Parameter(names = {"--hive-sync-password"}, description = "Password for hive sync, default 'hive'")
-  public String hiveSyncPassword = "hive";
+  public String hiveSyncPassword = FlinkOptions.HIVE_SYNC_PASSWORD.defaultValue();
 
   @Parameter(names = {"--hive-sync-jdbc-url"}, description = "Jdbc URL for hive sync, default 'jdbc:hive2://localhost:10000'")
   public String hiveSyncJdbcUrl = "jdbc:hive2://localhost:10000";
