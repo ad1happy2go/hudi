@@ -116,6 +116,13 @@
               </relocations>
               <createDependencyReducedPom>false</createDependencyReducedPom>
               <filters>
+                <!-- the GCS storage lock client ships in hudi-gcp-lock-bundle, shaded with its GCS SDK -->
+                <filter>
+                  <artifact>org.apache.hudi:hudi-gcp</artifact>
+                  <excludes>
+                    <exclude>org/apache/hudi/gcp/transaction/lock/**</exclude>
+                  </excludes>
+                </filter>
                 <filter>
                   <artifact>*:*</artifact>
                   <excludes>
