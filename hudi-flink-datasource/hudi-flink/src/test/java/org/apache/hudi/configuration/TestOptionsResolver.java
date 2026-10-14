@@ -21,11 +21,13 @@ package org.apache.hudi.configuration;
 import org.apache.hudi.common.model.HoodieFailedWritesCleaningPolicy;
 import org.apache.hudi.common.model.WriteConcurrencyMode;
 import org.apache.hudi.common.model.WriteOperationType;
+import org.apache.hudi.common.table.HoodieTableConfig;
 import org.apache.hudi.config.HoodieCleanConfig;
 import org.apache.hudi.config.HoodieWriteConfig;
 import org.apache.hudi.index.HoodieIndex;
 
 import org.apache.flink.configuration.Configuration;
+import org.apache.hudi.keygen.constant.ComplexKeyGenEncoding;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -122,5 +124,15 @@ public class TestOptionsResolver {
     conf.setString(HoodieWriteConfig.WRITE_CONCURRENCY_MODE.key(), WriteConcurrencyMode.OPTIMISTIC_CONCURRENCY_CONTROL.name());
     conf.set(FlinkOptions.PATH, tempFile.getAbsolutePath());
     return conf;
+  }
+
+  @Test
+  void testGetComplexKeygenEncoding() {
+    Configuration conf = new Configuration();
+    assertFalse(OptionsResolver.getComplexKeygenEncoding(conf).isPresent());
+    conf.setString(HoodieTableConfig.COMPLEX_KEYGEN_ENCODING.key(), "value_only");
+    assertEquals(ComplexKeyGenEncoding.VALUE_ONLY, OptionsResolver.getComplexKeygenEncoding(conf).get());
+    conf.setString(HoodieTableConfig.COMPLEX_KEYGEN_ENCODING.key(), "FIELD_PREFIXED");
+    assertEquals(ComplexKeyGenEncoding.FIELD_PREFIXED, OptionsResolver.getComplexKeygenEncoding(conf).get());
   }
 }

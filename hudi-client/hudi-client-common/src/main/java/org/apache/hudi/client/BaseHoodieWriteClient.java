@@ -51,7 +51,6 @@ import org.apache.hudi.common.schema.HoodieSchema;
 import org.apache.hudi.common.schema.HoodieSchemaUtils;
 import org.apache.hudi.common.table.HoodieTableConfig;
 import org.apache.hudi.common.table.HoodieTableMetaClient;
-import org.apache.hudi.common.table.HoodieTableVersion;
 import org.apache.hudi.common.table.TableSchemaResolver;
 import org.apache.hudi.common.table.timeline.HoodieActiveTimeline;
 import org.apache.hudi.common.table.timeline.HoodieInstant;
@@ -87,6 +86,7 @@ import org.apache.hudi.internal.schema.io.FileBasedInternalSchemaStorageManager;
 import org.apache.hudi.internal.schema.utils.AvroSchemaEvolutionUtils;
 import org.apache.hudi.internal.schema.utils.InternalSchemaUtils;
 import org.apache.hudi.internal.schema.utils.SerDeHelper;
+import org.apache.hudi.keygen.KeyGenUtils;
 import org.apache.hudi.keygen.constant.KeyGeneratorType;
 import org.apache.hudi.metadata.HoodieTableMetadataUtil;
 import org.apache.hudi.metadata.HoodieTableMetadataWriter;
@@ -120,8 +120,6 @@ import java.util.function.BiFunction;
 
 import static org.apache.hudi.common.model.HoodieCommitMetadata.SCHEMA_KEY;
 import static org.apache.hudi.common.table.timeline.InstantComparison.LESSER_THAN_OR_EQUALS;
-import static org.apache.hudi.keygen.KeyGenUtils.getComplexKeygenErrorMessage;
-import static org.apache.hudi.keygen.KeyGenUtils.isComplexKeyGeneratorWithSingleRecordKeyField;
 import static org.apache.hudi.metadata.HoodieTableMetadata.getMetadataTableBasePath;
 
 /**
@@ -1443,6 +1441,9 @@ public abstract class BaseHoodieWriteClient<T, I, K, O> extends BaseHoodieClient
     }
 
     doInitTable(operationType, metaClient, instantTime);
+    if (WriteOperationType.isInsert(operationType) || WriteOperationType.isChangingRecords(operationType)) {
+      ensureComplexKeyGenEncodingRecorded(metaClient);
+    }
     HoodieTable table = createTable(config, metaClient);
 
     // Validate table properties
@@ -1474,6 +1475,18 @@ public abstract class BaseHoodieWriteClient<T, I, K, O> extends BaseHoodieClient
     return true;
   }
 
+  /**
+   * A write that keys records needs {@link HoodieTableConfig#COMPLEX_KEYGEN_ENCODING} recorded before it keys them.
+   * Engines that key records outside the client (Spark, the streamer) record it when ingestion is set up, before
+   * this client exists, so the default only checks; a client whose callers hand it keyed records may record it here.
+   */
+  protected void ensureComplexKeyGenEncodingRecorded(HoodieTableMetaClient metaClient) {
+    HoodieTableConfig tableConfig = metaClient.getTableConfig();
+    if (KeyGenUtils.requireComplexKeyGenEncodingTracked(tableConfig) && !tableConfig.getComplexKeyGenEncoding().isPresent()) {
+      throw new HoodieException(KeyGenUtils.getComplexKeygenEncodingMissingMessage());
+    }
+  }
+
   public void validateAgainstTableProperties(HoodieTableConfig tableConfig, HoodieWriteConfig writeConfig) {
     // mismatch of table versions.
     CommonClientUtils.validateTableVersion(tableConfig, writeConfig);
@@ -1493,11 +1506,6 @@ public abstract class BaseHoodieWriteClient<T, I, K, O> extends BaseHoodieClient
       if (!KeyGeneratorType.isKeyGenValidForDisabledMetaFields(keyGenClass)) {
         throw new HoodieException("Only simple, non-partitioned or complex key generator are supported when meta-fields are disabled. Used: " + keyGenClass);
       }
-    }
-    if (tableConfig.getTableVersion().lesserThan(HoodieTableVersion.NINE)
-            && config.enableComplexKeygenValidation()
-            && isComplexKeyGeneratorWithSingleRecordKeyField(tableConfig)) {
-      throw new HoodieException(getComplexKeygenErrorMessage("ingestion"));
     }
     //Check to make sure it's not a COW table with consistent hashing bucket index
     if (tableConfig.getTableType() == HoodieTableType.COPY_ON_WRITE) {

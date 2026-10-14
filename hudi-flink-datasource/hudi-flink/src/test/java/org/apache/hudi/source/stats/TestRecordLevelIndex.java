@@ -22,6 +22,7 @@ import org.apache.hudi.common.table.HoodieTableConfig;
 import org.apache.hudi.common.table.HoodieTableMetaClient;
 import org.apache.hudi.common.util.Option;
 import org.apache.hudi.keygen.KeyGenerator;
+import org.apache.hudi.keygen.constant.ComplexKeyGenEncoding;
 import org.apache.hudi.sink.bulk.RowDataKeyGen;
 import org.apache.hudi.source.ExpressionEvaluators;
 import org.apache.hudi.utils.TestConfigurations;
@@ -125,9 +126,21 @@ public class TestRecordLevelIndex {
     List<ExpressionEvaluators.Evaluator> evaluators = createColumnStatsProbe(
         BuiltInFunctionDefinitions.EQUALS, "uuid", Collections.singletonList("id1"));
     String[] recordKeyFields = {"uuid"};
-    List<String> result = RecordLevelIndex.computeHoodieKeyFromFilters(
-        conf, metaClient, evaluators, recordKeyFields, TestConfigurations.ROW_TYPE, false);
+    List<String> result = RecordLevelIndex.computeHoodieKeyFromFilters(evaluators, recordKeyFields, TestConfigurations.ROW_TYPE, false, false);
     assertEquals(Collections.singletonList("id1"), result, "Should return the simple record key value");
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"VALUE_ONLY", "FIELD_PREFIXED"})
+  public void testComputeHoodieKeyFromFiltersHonorsPersistedComplexKeygenEncoding(String persistedEncoding) {
+    // a single record key under the complex key generator is looked up the way the table's encoding stores it
+    boolean prefixedSingleFieldKey = ComplexKeyGenEncoding.valueOf(persistedEncoding).encodesFieldName();
+    List<ExpressionEvaluators.Evaluator> evaluators = createColumnStatsProbe(
+        BuiltInFunctionDefinitions.EQUALS, "uuid", Collections.singletonList("id1"));
+    List<String> result = RecordLevelIndex.computeHoodieKeyFromFilters(
+        evaluators, new String[]{"uuid"}, TestConfigurations.ROW_TYPE, false, prefixedSingleFieldKey);
+    String expected = "FIELD_PREFIXED".equals(persistedEncoding) ? "uuid:id1" : "id1";
+    assertEquals(Collections.singletonList(expected), result, "The lookup key must match the stored encoding");
   }
 
   @Test
@@ -142,8 +155,7 @@ public class TestRecordLevelIndex {
     // Test with IN operator
     List<ExpressionEvaluators.Evaluator> evaluators = createColumnStatsProbe(BuiltInFunctionDefinitions.IN, "uuid", Arrays.asList("id1", "id2", "id3"));
     String[] recordKeyFields = {"uuid"};
-    List<String> result = RecordLevelIndex.computeHoodieKeyFromFilters(
-        conf, metaClient, evaluators, recordKeyFields, TestConfigurations.ROW_TYPE, false);
+    List<String> result = RecordLevelIndex.computeHoodieKeyFromFilters(evaluators, recordKeyFields, TestConfigurations.ROW_TYPE, false, false);
     assertEquals(Arrays.asList("id1", "id2", "id3"), result, "Should return all the IN operator values");
   }
 
@@ -159,8 +171,7 @@ public class TestRecordLevelIndex {
     // Test with OR operator (which should be converted to IN)
     List<ExpressionEvaluators.Evaluator> evaluators = createOrColumnStatsProbe("uuid", Arrays.asList("id1", "id2", "id3"));
     String[] recordKeyFields = {"uuid"};
-    List<String> result = RecordLevelIndex.computeHoodieKeyFromFilters(
-        conf, metaClient, evaluators, recordKeyFields, TestConfigurations.ROW_TYPE, false);
+    List<String> result = RecordLevelIndex.computeHoodieKeyFromFilters(evaluators, recordKeyFields, TestConfigurations.ROW_TYPE, false, false);
     // Note: OR with two values "id1" and "id2" should result in the literals from both evaluators
     assertEquals(Arrays.asList("id1", "id2", "id3"), result, "Should return values from OR operator");
   }
@@ -188,8 +199,7 @@ public class TestRecordLevelIndex {
             DataTypes.BOOLEAN())
     );
     String[] recordKeyFields = {"key1", "key2"};
-    List<String> result = RecordLevelIndex.computeHoodieKeyFromFilters(
-        conf, metaClient, ExpressionEvaluators.fromExpression(expressions), recordKeyFields, ROW_TYPE_MULTI_KEYS, false);
+    List<String> result = RecordLevelIndex.computeHoodieKeyFromFilters(ExpressionEvaluators.fromExpression(expressions), recordKeyFields, ROW_TYPE_MULTI_KEYS, false, false);
     // For complex keys, the format should be key1:val1,key2:val2
     assertEquals(Arrays.asList("key1:val1" + KeyGenerator.DEFAULT_RECORD_KEY_PARTS_SEPARATOR + "key2:val2"), result,
         "Should return composite key with complex record keys");
@@ -223,8 +233,7 @@ public class TestRecordLevelIndex {
     );
     String[] recordKeyFields = {"f_timestamp", "f_decimal"};
     RowType rowType = (RowType) ROW_DATA_TYPE_HOODIE_KEY_SPECIAL_DATA_TYPE.getLogicalType();
-    List<String> result = RecordLevelIndex.computeHoodieKeyFromFilters(
-        conf, metaClient, ExpressionEvaluators.fromExpression(expressions), recordKeyFields, rowType, consistentLogicalTimestampEnabled);
+    List<String> result = RecordLevelIndex.computeHoodieKeyFromFilters(ExpressionEvaluators.fromExpression(expressions), recordKeyFields, rowType, consistentLogicalTimestampEnabled, false);
     String expectedTimestampVal = RowDataKeyGen.getRecordKey(TimestampData.fromEpochMillis(1), "f_timestamp", consistentLogicalTimestampEnabled);
     assertEquals(Arrays.asList("f_timestamp:" + expectedTimestampVal + KeyGenerator.DEFAULT_RECORD_KEY_PARTS_SEPARATOR + "f_decimal:1.10"), result,
         "Should return composite key with complex record keys");
@@ -254,8 +263,7 @@ public class TestRecordLevelIndex {
             DataTypes.BOOLEAN())
     );
     String[] recordKeyFields = {"uuid"};
-    List<String> result = RecordLevelIndex.computeHoodieKeyFromFilters(
-        conf, metaClient, ExpressionEvaluators.fromExpression(expressions), recordKeyFields, TestConfigurations.ROW_TYPE, false);
+    List<String> result = RecordLevelIndex.computeHoodieKeyFromFilters(ExpressionEvaluators.fromExpression(expressions), recordKeyFields, TestConfigurations.ROW_TYPE, false, false);
     // This should return both values
     assertEquals(Arrays.asList("id1", "id2"), result, "Should return multiple values for same field");
   }
@@ -273,8 +281,7 @@ public class TestRecordLevelIndex {
     List<ExpressionEvaluators.Evaluator> evaluators = createColumnStatsProbe(
         BuiltInFunctionDefinitions.EQUALS, "nonKeyField", Collections.singletonList("val1"));
     String[] recordKeyFields = {"uuid"};
-    List<String> result = RecordLevelIndex.computeHoodieKeyFromFilters(
-        conf, metaClient, evaluators, recordKeyFields, TestConfigurations.ROW_TYPE, false);
+    List<String> result = RecordLevelIndex.computeHoodieKeyFromFilters(evaluators, recordKeyFields, TestConfigurations.ROW_TYPE, false, false);
     assertEquals(Collections.emptyList(), result, "Should return empty list when filtering on non-record key field");
 
     CallExpression keyExpr = CallExpression.permanent(
@@ -293,8 +300,7 @@ public class TestRecordLevelIndex {
         DataTypes.BOOLEAN());
 
     evaluators = ExpressionEvaluators.fromExpression(Collections.singletonList(orExpression));
-    result = RecordLevelIndex.computeHoodieKeyFromFilters(
-        conf, metaClient, evaluators, recordKeyFields, TestConfigurations.ROW_TYPE, false);
+    result = RecordLevelIndex.computeHoodieKeyFromFilters(evaluators, recordKeyFields, TestConfigurations.ROW_TYPE, false, false);
     assertEquals(Collections.emptyList(), result, "Should return empty list when filtering on or predicate including multiple fields");
   }
 
@@ -324,8 +330,7 @@ public class TestRecordLevelIndex {
             DataTypes.BOOLEAN())
     );
     String[] recordKeyFields = {"key1", "key2"};
-    List<String> result = RecordLevelIndex.computeHoodieKeyFromFilters(
-        conf, metaClient, ExpressionEvaluators.fromExpression(expressions), recordKeyFields, ROW_TYPE_MULTI_KEYS, false);
+    List<String> result = RecordLevelIndex.computeHoodieKeyFromFilters(ExpressionEvaluators.fromExpression(expressions), recordKeyFields, ROW_TYPE_MULTI_KEYS, false, false);
     // Should have 4 combinations: (val1,val3), (val1,val4), (val2,val3), (val2,val4)
     List<String> expected = Arrays.asList(
         "key1:val1" + KeyGenerator.DEFAULT_RECORD_KEY_PARTS_SEPARATOR + "key2:val3",
