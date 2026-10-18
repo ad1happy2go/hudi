@@ -2451,6 +2451,143 @@ def collect_flink_mappings(repo_root, constant_index):
 
 
 # --------------------------------------------------------------------------
+# Pass 9: validations that reject a configuration
+# --------------------------------------------------------------------------
+
+CHECK_CALL_RE = re.compile(r"\b(?:ValidationUtils\s*\.\s*|Preconditions\s*\.\s*)?(checkArgument|checkState)\s*\(")
+THROW_RE = re.compile(r"\bthrow\s+new\s+([A-Z]\w*(?:Exception|Error))\s*\(")
+WARN_RE = re.compile(r"\b(?:log|LOG|logger|LOGGER)\s*\.\s*warn\s*\(")
+CONFIG_KEY_IN_TEXT_RE = re.compile(r"\bhoodie\.[a-z0-9_.\-]+[a-z0-9_]")
+MAX_VALIDATIONS = 8
+
+
+def _message_text(arg, text_with_strings):
+    """The string literals of a message argument, joined: the readable part."""
+    parts = re.findall(r'"((?:[^"\\]|\\.)*)"', arg)
+    return " ".join(p for p in parts)[:300]
+
+
+def _inside_catch(masked, lo, index):
+    """True when ``index`` sits inside a ``catch (...) { ... }`` block: a rethrow
+    of a runtime failure, not a check on configuration."""
+    for match in re.finditer(r"\bcatch\s*\(", masked[lo:index]):
+        _, after = extract_call_args(masked, lo + match.end() - 1)
+        brace = masked.find("{", after)
+        if brace < 0 or brace > index:
+            continue
+        depth = 0
+        for i in range(brace, index):
+            if masked[i] == "{":
+                depth += 1
+            elif masked[i] == "}":
+                depth -= 1
+        if depth > 0:
+            return True
+    return False
+
+
+def collect_validations(repo_root, constant_index, accessors, config_keys):
+    """key -> [{kind, condition, message, at, when}] for checks that reject a config.
+
+    A config is attached to a check when the check's condition names it
+    (constant or accessor), when the enclosing `if` names it, or when the
+    message spells out its key -- "To enable NON_BLOCKING_CONCURRENCY_CONTROL,
+    set hoodie.clean.failed.writes.policy=LAZY" names the companion outright.
+    """
+    result = defaultdict(list)
+    for file_path in walk_source_files(repo_root, (".java",)):
+        if SOURCE_DIR_MARKER not in file_path:
+            continue
+        if module_of(os.path.relpath(file_path, repo_root)) in SAMPLE_MODULES:
+            continue
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="replace") as handle:
+                original = handle.read()
+        except OSError:
+            continue
+        if "checkArgument" not in original and "checkState" not in original \
+                and "throw new" not in original and ".warn(" not in original:
+            continue
+        masked = strip_comments_and_strings(original)
+        with_strings = strip_comments_and_strings(original, keep_string_bodies=True)
+        class_match = CLASS_DECL_RE.search(masked)
+        owner = class_match.group(1) if class_match else None
+        imports = static_imports(original)
+        relative = os.path.relpath(file_path, repo_root)
+        for name, body_start, body_end, _ in find_method_bodies(masked, original):
+            body = masked[body_start:body_end]
+            if "check" not in body and "throw" not in body and "warn" not in body:
+                continue
+            found = []
+            for call in CHECK_CALL_RE.finditer(masked, body_start, body_end):
+                args_text, _ = extract_call_args(with_strings, call.end() - 1)
+                if not args_text:
+                    continue
+                args = split_top_level_args(args_text)
+                condition = strip_comments_and_strings(args[0]) if args else ""
+                message = _message_text(" ".join(args[1:]), with_strings) if len(args) > 1 else ""
+                found.append((call.group(1), call.start(), condition, message))
+            # A throw or a warning under an `if` is a check only when that `if`
+            # itself names a config; otherwise it is a runtime failure ("Async
+            # clustering failed") that merely sits inside a feature branch.
+            for pattern, label in ((THROW_RE, "throw"), (WARN_RE, "warn")):
+                for hit in pattern.finditer(masked, body_start, body_end):
+                    if label == "throw" and _inside_catch(masked, body_start, hit.start()):
+                        continue
+                    gates = enclosing_gates(masked, body_start, hit.start())
+                    if not gates:
+                        continue
+                    condition = gates[-1]
+                    local_scope = condition
+                    for local in set(re.findall(r"\b([a-z][A-Za-z0-9_]{2,})\b", condition)):
+                        assignment = re.search(r"\b%s\s*=(?!=)\s*([^;]+);" % re.escape(local),
+                                               masked[body_start:hit.start()])
+                        if assignment:
+                            local_scope += " " + assignment.group(1)
+                    if not _config_refs(local_scope, owner, constant_index, imports, accessors):
+                        continue
+                    args_text, _ = extract_call_args(with_strings, hit.end() - 1)
+                    kind = "throw " + hit.group(1) if label == "throw" else "warn"
+                    found.append((kind, hit.start(), condition,
+                                  _message_text(args_text or "", with_strings)))
+            for kind, index, condition, message in found:
+                when = [g for g in enclosing_gates(masked, body_start, index)
+                        if g != condition][-2:]
+                scope = " ".join([condition] + when)
+                # `checkArgument(maxInstantsToKeep > minInstantsToKeep, ...)` tests
+                # locals; the config is in their assignments earlier in the method.
+                for local in set(re.findall(r"\b([a-z][A-Za-z0-9_]{2,})\b", scope)):
+                    assignment = re.search(r"\b%s\s*=(?!=)\s*([^;]+);" % re.escape(local),
+                                           masked[body_start:index])
+                    if assignment:
+                        scope += " " + assignment.group(1)
+                # Format arguments name configs too: "%s should be set to %s", X.key().
+                scope += " " + " ".join(re.findall(r"[A-Z][\w$.]*\s*\.\s*key\s*\(\s*\)",
+                                                   masked[index:masked.find(";", index)]))
+                keys = []
+                for k in _config_refs(scope, owner, constant_index, imports, accessors):
+                    if k not in keys:
+                        keys.append(k)
+                for k in CONFIG_KEY_IN_TEXT_RE.findall(message):
+                    if k in config_keys and k not in keys:
+                        keys.append(k)
+                if not keys:
+                    continue
+                record = OrderedDict([
+                    ("kind", kind),
+                    ("condition", summarize_condition(condition)),
+                    ("message", message),
+                    ("at", "%s.%s (%s:%d)" % (owner or "?", name, relative, line_of(original, index))),
+                ])
+                if when:
+                    record["when"] = when
+                for k in keys[:6]:
+                    if len(result[k]) < MAX_VALIDATIONS and record not in result[k]:
+                        result[k].append(record)
+    return result
+
+
+# --------------------------------------------------------------------------
 # Pass 8: evaluate computed defaults
 # --------------------------------------------------------------------------
 
@@ -3044,6 +3181,8 @@ def build_catalog(repo_root, verbose=False):
 
     known_implementations = collect_known_implementations(
         entries, collect_type_hierarchy(repo_root))
+    validations = collect_validations(repo_root, constant_index, accessors,
+                                      {e["key"] for e in entries if e.get("key")})
     string_constants = collect_string_constants(repo_root)
     infer_sources = collect_infer_sources(repo_root, entries, constant_index, accessors,
                                           string_constants)
@@ -3148,6 +3287,9 @@ def build_catalog(repo_root, verbose=False):
         # extends/implements clauses, so a class loaded by reflection from
         # outside this tree is never listed.
         entry["knownImplementations"] = known_implementations.get(key)
+        # Checks that reject a configuration naming this key. These are the
+        # enforced constraints -- a write fails -- as opposed to co-occurrence.
+        entry["validations"] = validations.get(key, [])
         # A computed default is a source expression nobody can paste into a config
         # file. Evaluate the shapes that can be evaluated without running Java.
         if entry.get("hasDefaultValue") and not entry.get("defaultValueIsLiteral"):
@@ -3290,6 +3432,7 @@ def build_catalog(repo_root, verbose=False):
         entry["flinkOptions"] = []
         entry["knownImplementations"] = None
         entry["inferredFrom"] = None
+        entry["validations"] = []
         configs.append(entry)
 
     stats = {
@@ -3308,6 +3451,7 @@ def build_catalog(repo_root, verbose=False):
         "configsWithCallSiteDefaults": sum(1 for c in configs if c.get("callSiteDefaults")),
         "configsWithFlinkOptions": sum(1 for c in configs if c.get("flinkOptions")),
         "configsWithKnownImplementations": sum(1 for c in configs if c.get("knownImplementations")),
+        "configsWithValidations": sum(1 for c in configs if c.get("validations")),
         "configsWithConfigDependentDefaults": sum(
             1 for record in engine_defaults.values()
             if record.get("defaultIsConfigDependent")),
@@ -3484,6 +3628,8 @@ def main(argv=None):
     print("Flink options     : %d configs driven by a Flink option on Flink" % stats["configsWithFlinkOptions"])
     print("Implementations   : %d class-valued configs with shipped implementations listed"
           % stats["configsWithKnownImplementations"])
+    print("Validations       : %d configs named by a check that rejects a configuration"
+          % stats["configsWithValidations"])
     print("Aliases resolved  : %d (unresolved %d)"
           % (stats["aliasesResolved"], stats["aliasesUnresolved"]))
     print("Accessors         : %d" % stats["accessorsResolved"])

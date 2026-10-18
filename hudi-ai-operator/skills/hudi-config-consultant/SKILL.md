@@ -293,9 +293,12 @@ Work this order and stop at the first hit:
    charge of this key, and the `hoodie.*` value they set may never be what the job reads. Name the
    Flink option and its default. This is the most common cause of "I set it on Flink and nothing
    happened", and nothing else in the ladder will find it.
-1. **Is the read gated?** `gatingConditions` — a read under a `switch` on a strategy enum, or an
+1. **Did Hudi override it?** A `warn` in `validations` whose message says it is adjusting or
+   overriding the value (the archiver raising `hoodie.keep.min.commits`, the single-writer lock
+   override) explains "I set it and it did nothing" outright, and the user's log has the line.
+2. **Is the read gated?** `gatingConditions` — a read under a `switch` on a strategy enum, or an
    `if` on another config, is usually the answer.
-2. **Is it gated before the config is even consulted?** `shortCircuits` lists wrapper methods
+3. **Is it gated before the config is even consulted?** `shortCircuits` lists wrapper methods
    that can return a fixed value without ever reading the key — a table-version check, an engine
    check, an unsupported operation type. `hoodie.metadata.streaming.write.enabled` is the clearest
    case: `HoodieWriteConfig.isMetadataStreamingWritesEnabled` returns `false` outright below table
@@ -307,16 +310,16 @@ Work this order and stop at the first hit:
    and the rest call the accessor incidentally; the shape is matched textually, the attribution is
    not verified. Confirm the literal return really bypasses this config, then report it. An
    unverified entry is a lead, not a finding.
-3. **Were they relying on the default?** `engineDefaults` or `callSiteDefaults` differing from
+4. **Were they relying on the default?** `engineDefaults` or `callSiteDefaults` differing from
    the declared value
    explains most "it was already on/off" reports. `setDefaultValue` applies only when the key is
    unset; an explicit value always wins.
-4. **Is a different key winning?** `alternatives`.
-5. **Is it deprecated?** `deprecatedAfter`, against the catalog's `hudiVersion`.
-6. **Is it inferred?** `hasInferFunction: true` — `inferredFrom.reads` names the configs the
+5. **Is a different key winning?** `alternatives`.
+6. **Is it deprecated?** `deprecatedAfter`, against the catalog's `hudiVersion`.
+7. **Is it inferred?** `hasInferFunction: true` — `inferredFrom.reads` names the configs the
    inferred value is computed from. If the user changed one of those, the value they never set
    changed with it; if they set this key explicitly, the inference is skipped.
-7. **Are there no read sites?** `readSites: []` with a `parseWarnings` entry is a gap in the
+8. **Are there no read sites?** `readSites: []` with a `parseWarnings` entry is a gap in the
    catalog, not proof the config is dead. Say which it is.
 
    Reaching the end of the ladder is **not** a finding that the config works. It means the catalog
@@ -339,7 +342,14 @@ it has a systematic blind spot: a companion read through a typed accessor rather
 `getWriteConcurrencyMode() == SINGLE_WRITER` — never appears at all, and that is exactly the kind of
 config whose absence silently defeats the one the user set.
 
-**Check `gatedBy` first.** It lists configs named inside this config's own gating conditions, which
+**Check `validations` first, then `gatedBy`.** A `checkArgument` or `throw` in `validations` is a
+companion Hudi enforces — the write fails without it — and its `message` is usually the sentence
+the user needs ("To enable NON_BLOCKING_CONCURRENCY_CONTROL, set
+hoodie.clean.failed.writes.policy=LAZY"). A `warn` is a recommendation, and often the trace of a
+silent override ("For a single writer mode, overriding lock provider class ... to
+InProcessLockProvider"): say so in those words.
+
+**Then `gatedBy`.** It lists configs named inside this config's own gating conditions, which
 is a stronger relationship than co-occurrence — the gate decides whether this config is read at
 all — and it is the right place to look for the enum-compared companions `coConfigs` misses.
 
