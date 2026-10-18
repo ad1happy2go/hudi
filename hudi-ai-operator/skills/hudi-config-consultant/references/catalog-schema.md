@@ -32,7 +32,7 @@ limitations under the License.
 `schemaVersion` 2 adds `engineDefaults` / `conditionalEngineDefaults`, the `language` field, and
 the `readContextResolved` honesty flag for Scala-declared configs. `schemaVersion` 3 adds
 `shortCircuits` / `shortCircuitHeuristic`, `gatedBy` and `noExternalConsumer`. `schemaVersion` 4
-adds `callSiteDefaults`, `flinkOptions`, `knownImplementations` and `inferredFrom`.
+adds `callSiteDefaults`, `flinkOptions`, `knownImplementations`, `inferredFrom` and `resolvedDefault`.
 
 `configs` is sorted by `key`, so regeneration produces a readable diff. Read `hudiVersion` and
 `generatedFrom` on every query; they belong in your answer.
@@ -55,6 +55,8 @@ adds `callSiteDefaults`, `flinkOptions`, `knownImplementations` and `inferredFro
 | `defaultValue` | The default, or `null`. |
 | `defaultValueIsLiteral` | `false` means `defaultValue` is a **source expression**, not a value — e.g. `String.valueOf(104857600)` or `KEEP_LATEST_COMMITS.name()`. |
 | `defaultValueNote` | Present when the default is computed, to say so. |
+| `resolvedDefault` | The evaluated value of a computed default — arithmetic (`String.valueOf(120 * 1024 * 1024)` → `125829120`), an enum constant (`HoodieFileFormat.PARQUET` → `PARQUET`), a class literal (`HiveSyncTool.class.getName()` → `org.apache.hudi.hive.HiveSyncTool`), a named constant, an enum's string or int field (`WriteOperationType.UPSERT.value` → `upsert`, `HoodieTableVersion.current().versionCode()` → `10`), or another config's default. Present only when it could be evaluated. This is the value to give a user who will paste it into a config file. |
+| `resolvedDefaultHow` | Which of those it was. |
 | `documentation` | The `withDocumentation` text. |
 | `documentationSource` | `literal`, `resolvedFromConstants`, or `enumClass:<Name>` when the docs live on an enum. |
 | `enumDocumentation` | For `enumClass` docs: `{enum, file, description, values: [{value, description}]}`. **This is where valid values and their meanings live** for strategy-style configs. |

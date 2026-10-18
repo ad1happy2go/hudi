@@ -2451,6 +2451,196 @@ def collect_flink_mappings(repo_root, constant_index):
 
 
 # --------------------------------------------------------------------------
+# Pass 8: evaluate computed defaults
+# --------------------------------------------------------------------------
+
+VALUE_CONSTANT_RE = re.compile(
+    r"\b(?:static\s+)?final\s+(?:static\s+)?(?:int|long|double|float|boolean|Integer|Long|Double|Boolean)\s+"
+    r"(?P<name>[A-Z][A-Z0-9_]*)\s*=\s*(?P<value>[^;]+);")
+SCALA_VALUE_CONSTANT_RE = re.compile(
+    r"^[ \t]*(?:final\s+)?val\s+(?P<name>[A-Z][A-Z0-9_]*)\s*(?::\s*[\w\[\]]+)?\s*=\s*(?P<value>[^\n]+?)\s*$", re.M)
+ENUM_VALUE_RE = re.compile(r"\b(?P<const>[A-Z][A-Z0-9_]*)\s*\(\s*\"(?P<value>[^\"]*)\"")
+ARITH_RE = re.compile(r"^[\d\s*+\-/().LlDdFf]+$")
+TIME_UNIT_SECONDS = {"NANOSECONDS": 1e-9, "MICROSECONDS": 1e-6, "MILLISECONDS": 1e-3, "SECONDS": 1,
+                     "MINUTES": 60, "HOURS": 3600, "DAYS": 86400}
+TIME_UNIT_TARGET = {"toNanos": 1e-9, "toMicros": 1e-6, "toMillis": 1e-3, "toSeconds": 1,
+                    "toMinutes": 60, "toHours": 3600, "toDays": 86400}
+JAVA_LIMITS = {
+    "Long.MAX_VALUE": str(2 ** 63 - 1), "Integer.MAX_VALUE": str(2 ** 31 - 1),
+    "Long.MIN_VALUE": str(-2 ** 63), "Integer.MIN_VALUE": str(-2 ** 31),
+}
+
+
+def collect_value_constants(repo_root):
+    """(owner, NAME) and (None, NAME) -> expression, for numeric/boolean static finals
+    and single-line Scala vals. Ambiguous bare names are dropped."""
+    found, bare, conflicts = {}, {}, set()
+    for file_path in walk_source_files(repo_root, (".java", ".scala")):
+        if SOURCE_DIR_MARKER not in file_path:
+            continue
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="replace") as handle:
+                original = handle.read()
+        except OSError:
+            continue
+        is_scala = file_path.endswith(".scala")
+        masked = strip_comments_and_strings(original, scala=is_scala)
+        pattern = SCALA_VALUE_CONSTANT_RE if is_scala else VALUE_CONSTANT_RE
+        for match in pattern.finditer(masked):
+            name, value = match.group("name"), " ".join(match.group("value").split())
+            if "ConfigProperty" in value or value.endswith(("(", "{", "+", ".")):
+                continue
+            owner = (find_enclosing_scala_object(masked, match.start()) if is_scala
+                     else find_enclosing_class(masked, match.start()))
+            found[(owner, name)] = value
+            if name in bare and bare[name] != value:
+                conflicts.add(name)
+            bare[name] = value
+    for name, value in bare.items():
+        if name not in conflicts:
+            found[(None, name)] = value
+    return found
+
+
+def collect_enum_string_values(repo_root):
+    """(Enum, CONST) -> first string constructor arg, e.g. (WriteOperationType, UPSERT) -> upsert.
+
+    Also records, under ("#int", Enum, CONST), a leading int constructor arg
+    (HoodieTableVersion.TEN -> 10), and under ("#returns", Enum, method), a
+    static no-arg method that only returns one of its constants
+    (HoodieTableVersion.current() -> TEN).
+    """
+    values = {}
+    for file_path in walk_source_files(repo_root, (".java",)):
+        if SOURCE_DIR_MARKER not in file_path:
+            continue
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="replace") as handle:
+                original = handle.read()
+        except OSError:
+            continue
+        if " enum " not in original:
+            continue
+        text = strip_comments_and_strings(original, keep_string_bodies=True)
+        for enum_match in re.finditer(r"\benum\s+([A-Z]\w*)[^{]*\{", text):
+            body_start = enum_match.end()
+            body_end = text.find(";", body_start)
+            if body_end < 0:
+                continue
+            for value_match in ENUM_VALUE_RE.finditer(text[body_start:body_end]):
+                values[(enum_match.group(1), value_match.group("const"))] = value_match.group("value")
+            for int_match in re.finditer(r"\b([A-Z][A-Z0-9_]*)\s*\(\s*(-?\d+)\s*[,)]",
+                                         text[body_start:body_end]):
+                values[("#int", enum_match.group(1), int_match.group(1))] = int_match.group(2)
+            for ret in re.finditer(r"\bstatic\s+%s\s+(\w+)\s*\(\s*\)\s*\{\s*return\s+([A-Z][A-Z0-9_]*)\s*;\s*\}"
+                                   % re.escape(enum_match.group(1)), text):
+                values[("#returns", enum_match.group(1), ret.group(1))] = ret.group(2)
+    return values
+
+
+def _eval_arith(expr):
+    cleaned = re.sub(r"(?<=\d)_(?=\d)", "", expr)
+    cleaned = re.sub(r"(?<=\d)[LlDdFf]\b", "", cleaned)
+    if not ARITH_RE.match(cleaned) or not re.search(r"\d", cleaned):
+        return None
+    try:
+        value = eval(cleaned, {"__builtins__": {}}, {})  # digits and operators only, checked above
+    except Exception:
+        return None
+    if isinstance(value, float) and value.is_integer() and "." not in cleaned and "/" not in cleaned:
+        value = int(value)
+    return str(value)
+
+
+def evaluate_default(expr, ctx, depth=0):
+    """Best-effort value of a default expression, or None. Returns (value, how)."""
+    if expr is None or depth > 4:
+        return None, None
+    expr = " ".join(str(expr).split())
+    inner = re.fullmatch(r"(?:String\s*\.\s*valueOf|Long\s*\.\s*valueOf|Integer\s*\.\s*valueOf|"
+                         r"Boolean\s*\.\s*toString|Integer\s*\.\s*toString|Long\s*\.\s*toString)\s*\((.*)\)", expr)
+    if inner:
+        expr = inner.group(1).strip()
+    if expr in JAVA_LIMITS:
+        return JAVA_LIMITS[expr], "javaConstant"
+    unit = re.fullmatch(r"TimeUnit\s*\.\s*([A-Z]+)\s*\.\s*(to[A-Z][a-z]+)\s*\((.*)\)", expr)
+    if unit and unit.group(1) in TIME_UNIT_SECONDS and unit.group(2) in TIME_UNIT_TARGET:
+        amount = _eval_arith(unit.group(3))
+        if amount is not None:
+            value = float(amount) * TIME_UNIT_SECONDS[unit.group(1)] / TIME_UNIT_TARGET[unit.group(2)]
+            return str(int(value)), "timeUnit"
+    value = _eval_arith(expr)
+    if value is not None:
+        return value, "arithmetic"
+    if expr in ("true", "false"):
+        return expr, "literal"
+    # X.class.getName(), classOf[X].getName -> FQN
+    cls = re.fullmatch(r"(?:classOf\[\s*)?([A-Z][\w$]*)(?:\s*\])?(?:\s*\.\s*class)?\s*\.\s*"
+                       r"(?:getName|getCanonicalName|getSimpleName)\s*(?:\(\s*\))?", expr)
+    if cls:
+        info = ctx["types"].get(cls.group(1))
+        if info and not info.get("ambiguous"):
+            return info["fqn"], "className"
+        return None, None
+    # OTHER_CONFIG.defaultValue()
+    other = re.fullmatch(r"((?:[A-Z][\w$]*\s*\.\s*)?[A-Z][A-Z0-9_]*)\s*\.\s*defaultValue\s*\(\s*\)", expr)
+    if other:
+        key = resolve_constant(other.group(1).replace(" ", ""), None, ctx["constant_index"])
+        entry = ctx["by_key"].get(key)
+        if entry:
+            if entry.get("defaultValueIsLiteral"):
+                return entry.get("defaultValue"), "otherConfigDefault:" + key
+            value, _ = evaluate_default(entry.get("defaultValue"), ctx, depth + 1)
+            if value is not None:
+                return value, "otherConfigDefault:" + key
+        return None, None
+    # Enum.current() / Enum.current().versionCode()
+    returns = re.fullmatch(r"([A-Z][\w$]*)\s*\.\s*([a-z]\w*)\s*\(\s*\)(?:\s*\.\s*(\w+)\s*\(\s*\))?", expr)
+    if returns:
+        const = ctx["enum_values"].get(("#returns", returns.group(1), returns.group(2)))
+        if const:
+            if not returns.group(3):
+                return const, "enumMethod"
+            number = ctx["enum_values"].get(("#int", returns.group(1), const))
+            if number is not None:
+                return number, "enumMethod"
+    # Enum.CONST.value / .value() / .getValue() / .name()
+    enum_value = re.fullmatch(r"(?:[\w$]+\s*\.\s*)*?([A-Z][\w$]*)\s*\.\s*([A-Z][A-Z0-9_]*)\s*\.\s*"
+                              r"(value|getValue|configValue|getConfigValue|name|toString)\s*(?:\(\s*\))?", expr)
+    if enum_value:
+        if enum_value.group(3) in ("name", "toString"):
+            return enum_value.group(2), "enumName"
+        found = ctx["enum_values"].get((enum_value.group(1), enum_value.group(2)))
+        if found is not None:
+            return found, "enumValue"
+        return None, None
+    # Enum.CONST (a typed default; the stored string is the constant's name)
+    enum_const = re.fullmatch(r"(?:[\w$]+\s*\.\s*)*([A-Z][\w$]*[a-z][\w$]*)\s*\.\s*([A-Z][A-Z0-9_]*)", expr)
+    if enum_const and (enum_const.group(1), enum_const.group(2)) not in ctx["string_constants"] \
+            and (enum_const.group(1), enum_const.group(2)) not in ctx["value_constants"]:
+        return enum_const.group(2), "enumConstant"
+    # A bare or qualified constant: string, then numeric.
+    const = re.fullmatch(r"(?:([A-Z][\w$]*)\s*\.\s*)?([A-Z][A-Z0-9_]*)", expr)
+    if const:
+        raw = ctx["string_constants"].get((const.group(1), const.group(2))) \
+            or ctx["string_constants"].get((None, const.group(2)))
+        if raw is not None:
+            literal = concatenated_string_literal(raw)
+            if literal is not None:
+                return literal, "stringConstant"
+            value, _ = evaluate_default(raw, ctx, depth + 1)
+            if value is not None:
+                return value, "stringConstant"
+        raw = ctx["value_constants"].get((const.group(1) or ctx.get("owner"), const.group(2))) \
+            or ctx["value_constants"].get((None, const.group(2)))
+        if raw is not None:
+            value, _ = evaluate_default(raw, ctx, depth + 1)
+            if value is not None:
+                return value, "constant"
+    return None, None
+
+
+# --------------------------------------------------------------------------
 # Pass 7: what an infer function reads
 # --------------------------------------------------------------------------
 
@@ -2854,8 +3044,17 @@ def build_catalog(repo_root, verbose=False):
 
     known_implementations = collect_known_implementations(
         entries, collect_type_hierarchy(repo_root))
+    string_constants = collect_string_constants(repo_root)
     infer_sources = collect_infer_sources(repo_root, entries, constant_index, accessors,
-                                          collect_string_constants(repo_root))
+                                          string_constants)
+    default_ctx = {
+        "types": collect_type_hierarchy(repo_root),
+        "constant_index": constant_index,
+        "by_key": {e["key"]: e for e in entries if e.get("key")},
+        "enum_values": collect_enum_string_values(repo_root),
+        "string_constants": string_constants,
+        "value_constants": collect_value_constants(repo_root),
+    }
     call_site_defaults = collect_call_site_defaults(repo_root, constant_index)
     flink_mappings, _ = collect_flink_mappings(repo_root, constant_index)
     if verbose:
@@ -2949,6 +3148,14 @@ def build_catalog(repo_root, verbose=False):
         # extends/implements clauses, so a class loaded by reflection from
         # outside this tree is never listed.
         entry["knownImplementations"] = known_implementations.get(key)
+        # A computed default is a source expression nobody can paste into a config
+        # file. Evaluate the shapes that can be evaluated without running Java.
+        if entry.get("hasDefaultValue") and not entry.get("defaultValueIsLiteral"):
+            default_ctx["owner"] = entry["declaredIn"].get("class")
+            value, how = evaluate_default(entry.get("defaultValue"), default_ctx)
+            if value is not None:
+                entry["resolvedDefault"] = value
+                entry["resolvedDefaultHow"] = how
         # What an unset value is inferred from. `reads` names the configs the
         # infer function (and up to two hops of helpers) consults.
         entry["inferredFrom"] = infer_sources.get(key) if entry.get("hasInferFunction") else None

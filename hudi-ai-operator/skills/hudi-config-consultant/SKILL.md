@@ -429,8 +429,10 @@ config is unconditional.
 - `parseWarnings` on an entry means the generator could not fully read that declaration. Check it
   before answering, and pass the caveat on.
 - A computed default (`defaultValueIsLiteral: false`) is shown as its source expression, for
-  example `String.valueOf(104857600)` or `String.valueOf(120 * 1024 * 1024)`. **Always evaluate
-  arithmetic on literals and give both forms** — the user is going to paste a value into a config
+  example `String.valueOf(104857600)` or `String.valueOf(120 * 1024 * 1024)`. Use
+  `resolvedDefault` when it is present — the generator has already evaluated it, including named
+  constants and enum values you cannot see from the catalog. Otherwise **evaluate arithmetic on
+  literals yourself, and give both forms** — the user is going to paste a value into a config
   file, and a source expression is not settable. Say it is computed at class-init time. If the
   expression names a constant you cannot resolve, say that rather than guessing.
 - Do not recommend changing an `advanced` config without a stated reason tied to something the user
