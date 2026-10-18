@@ -283,7 +283,7 @@ in one sentence, then the evidence.
 
 **Before the ladder: if `readContextResolved` is `false`, open the Scala read sites.** The ladder
 below reasons over `gatingConditions`, `coConfigs` and read context, none of which are recovered
-for Scala. Run it on an unresolved config and every step passes vacuously, landing you on step 7
+for Scala. Run it on an unresolved config and every step passes vacuously, landing you on the last rung
 ("read sites exist, so it is live") — a confident wrong answer. For a `hoodie.datasource.*` key
 that verdict is never earned from the catalog alone. Read the sites, then run the ladder.
 
