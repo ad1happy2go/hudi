@@ -1,7 +1,7 @@
 {
   "schemaVersion": 4,
   "hudiVersion": "1.3.0-SNAPSHOT",
-  "generatedFrom": "1ff6fabee36e703bb94bc28e8d2c3e984c876190",
+  "generatedFrom": "25aed0625db85c946556516d3fea6474d83dc876",
   "configs": [
     {
       "key": "_.hoodie.allow.multi.write.on.same.instant",
@@ -517,6 +517,10 @@
           "sharedMethods": 1
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.failed.writes.policy",
           "sharedMethods": 1
         },
@@ -788,6 +792,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 7
+        },
         {
           "key": "hoodie.datasource.read.begin.instanttime",
           "sharedMethods": 3
@@ -1350,6 +1358,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
+        {
           "key": "hoodie.clean.failed.writes.policy",
           "sharedMethods": 1
         },
@@ -1697,6 +1709,10 @@
           "sharedMethods": 1
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.bucket.index.num.buckets",
           "sharedMethods": 1
         },
@@ -1746,10 +1762,6 @@
         },
         {
           "key": "hoodie.datasource.write.operation",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.datasource.write.partitionpath.field",
           "sharedMethods": 1
         }
       ],
@@ -2349,6 +2361,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 3
+        },
         {
           "key": "hoodie.metadata.enable",
           "sharedMethods": 3
@@ -3287,6 +3303,10 @@
           "sharedMethods": 10
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 5
+        },
+        {
           "key": "hoodie.bucket.index.hash.field",
           "sharedMethods": 3
         },
@@ -3372,10 +3392,6 @@
         },
         {
           "key": "hoodie.datasource.write.drop.partition.columns",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.datasource.write.keygenerator.class",
           "sharedMethods": 1
         }
       ],
@@ -3684,6 +3700,10 @@
         },
         {
           "key": "hoodie.avro.schema",
+          "sharedMethods": 1
+        },
+        {
+          "key": "hoodie.base.path",
           "sharedMethods": 1
         },
         {
@@ -4653,6 +4673,18 @@
           "line": 272
         },
         {
+          "method": "getBasePath",
+          "class": "HoodieSyncConfig",
+          "file": "hudi-sync/hudi-sync-common/src/main/java/org/apache/hudi/sync/common/HoodieSyncConfig.java",
+          "line": 219
+        },
+        {
+          "method": "getHudiTableBasePath",
+          "class": "StorageBasedLockConfig",
+          "file": "hudi-client/hudi-client-common/src/main/java/org/apache/hudi/config/StorageBasedLockConfig.java",
+          "line": 63
+        },
+        {
           "method": "ZookeeperBasedImplicitBasePathLockProvider",
           "class": "ZookeeperBasedImplicitBasePathLockProvider",
           "file": "hudi-client/hudi-client-common/src/main/java/org/apache/hudi/client/transaction/lock/ZookeeperBasedImplicitBasePathLockProvider.java",
@@ -4674,7 +4706,29 @@
           "line": 359
         }
       ],
-      "shortCircuits": [],
+      "shortCircuits": [
+        {
+          "method": "hasDefaultPartitionPath",
+          "class": "FourToFiveUpgradeHandler",
+          "file": "hudi-client/hudi-client-common/src/main/java/org/apache/hudi/table/upgrade/FourToFiveUpgradeHandler.java",
+          "line": 75,
+          "viaAccessor": "getBasePath",
+          "condition": "!tableConfig.isTablePartitioned()",
+          "literalReturnedFirst": true,
+          "verified": false
+        },
+        {
+          "method": "listBaseFilesToBeDeleted",
+          "class": "ListingBasedRollbackStrategy",
+          "file": "hudi-client/hudi-client-common/src/main/java/org/apache/hudi/table/action/rollback/ListingBasedRollbackStrategy.java",
+          "line": 295,
+          "viaAccessor": "getBasePath",
+          "condition": "path.toString().contains(basefileExtension)",
+          "literalReturnedFirst": true,
+          "verified": false
+        }
+      ],
+      "shortCircuitHeuristic": "Candidate wrappers found textually: a method that returns an accessor's value on one branch and a literal on another, so the literal path never reads the key. The shape is matched, the attribution is not verified -- roughly half of these are real gates and the rest call the accessor incidentally. Open the cited file:line and confirm the literal return really bypasses this config before telling a user it does.",
       "engineDefaults": null,
       "callSiteDefaults": [],
       "flinkOptions": [
@@ -4683,195 +4737,374 @@
           "flinkDefault": null,
           "valueTransformed": false,
           "how": "builder:withPath",
-          "at": "FlinkWriteClients (hudi-flink-datasource/hudi-flink/src/main/java/org/apache/hudi/util/FlinkWriteClients.java:177)"
+          "at": "StreamerUtil (hudi-flink-datasource/hudi-flink/src/main/java/org/apache/hudi/util/StreamerUtil.java:262)"
         }
       ],
       "flinkOptionNote": "On Flink this key is driven by a Flink option. 'fallbackKey': the job reads the Flink option and consults this key only when the Flink option is unset, so flinkDefault is the effective default. 'builder:<method>': the Flink write client copies the Flink option into this key, so with this key unset a Flink writer gets flinkDefault (valueTransformed: true means a unit conversion or other expression is applied at the cited line). An explicit hoodie.* key passed through the Flink table options is applied after the builder in FlinkWriteClients and wins; check the cited line for other builders.",
       "readSites": [
         {
-          "class": "BaseZookeeperBasedLockProvider",
-          "method": "BaseZookeeperBasedLockProvider",
-          "file": "hudi-client/hudi-client-common/src/main/java/org/apache/hudi/client/transaction/lock/BaseZookeeperBasedLockProvider.java",
-          "line": 67,
-          "via": "accessor:checkRequiredProps",
-          "gatesResolved": true,
-          "gates": []
-        },
-        {
-          "class": "FileSystemBasedLockProvider",
-          "method": "FileSystemBasedLockProvider",
-          "file": "hudi-client/hudi-client-common/src/main/java/org/apache/hudi/client/transaction/lock/FileSystemBasedLockProvider.java",
-          "line": 113,
-          "via": "accessor:checkRequiredProps",
-          "gatesResolved": true,
-          "gates": []
-        },
-        {
-          "class": "StorageBasedLockConfig",
-          "method": "fromProperties",
-          "file": "hudi-client/hudi-client-common/src/main/java/org/apache/hudi/config/StorageBasedLockConfig.java",
-          "line": 77,
-          "via": "accessor:checkRequiredProps",
-          "gatesResolved": true,
-          "gates": []
-        },
-        {
-          "class": "FileSystemBasedLockProvider",
-          "method": "checkRequiredProps",
-          "file": "hudi-client/hudi-client-common/src/main/java/org/apache/hudi/client/transaction/lock/FileSystemBasedLockProvider.java",
-          "line": 274,
-          "via": "constant",
+          "class": "FlinkWriteHandleFactory",
+          "method": "getFactory",
+          "file": "hudi-client/hudi-flink-client/src/main/java/org/apache/hudi/io/FlinkWriteHandleFactory.java",
+          "line": 62,
+          "via": "accessor:getBasePath",
           "gatesResolved": true,
           "gates": [
-            "when (ValidationUtils.checkArgument(config.getConfig().getString(FILESYSTEM_LOCK_PATH_PROP_KEY, null) != null || config.getConfig().getString(HoodieWriteConfig.BAS...)"
+            "if (tableConfig.getTableType().equals(HoodieTableType.MERGE_ON_READ))"
           ]
         },
         {
-          "class": "ZookeeperBasedImplicitBasePathLockProvider",
-          "method": "ZookeeperBasedImplicitBasePathLockProvider",
-          "file": "hudi-client/hudi-client-common/src/main/java/org/apache/hudi/client/transaction/lock/ZookeeperBasedImplicitBasePathLockProvider.java",
-          "line": 84,
-          "via": "constant",
-          "gatesResolved": true,
-          "gates": []
-        },
-        {
-          "class": "ZookeeperBasedImplicitBasePathLockProvider",
-          "method": "getZkBasePath",
-          "file": "hudi-client/hudi-client-common/src/main/java/org/apache/hudi/client/transaction/lock/ZookeeperBasedImplicitBasePathLockProvider.java",
-          "line": 91,
-          "via": "constant",
-          "gatesResolved": true,
-          "gates": []
-        },
-        {
-          "class": "InProcessLockProvider",
-          "method": "InProcessLockProvider",
-          "file": "hudi-common/src/main/java/org/apache/hudi/core/transaction/lock/InProcessLockProvider.java",
-          "line": 77,
-          "via": "constant",
-          "gatesResolved": true,
-          "gates": []
-        },
-        {
-          "class": "HoodieIndexer",
-          "method": "getHoodieMetadataConfig",
-          "file": "hudi-utilities/src/main/java/org/apache/hudi/utilities/HoodieIndexer.java",
+          "class": "FSUtils",
+          "method": "getAllPartitionPaths",
+          "file": "hudi-common/src/main/java/org/apache/hudi/common/fs/FSUtils.java",
           "line": 255,
-          "via": "constant",
+          "via": "accessor:getBasePath",
           "gatesResolved": true,
           "gates": []
         },
         {
-          "class": "HiveMetastoreBasedLockProvider",
-          "method": "HiveMetastoreBasedLockProvider",
-          "file": "hudi-sync/hudi-hive-sync/src/main/java/org/apache/hudi/hive/transaction/lock/HiveMetastoreBasedLockProvider.java",
-          "line": 115,
-          "via": "accessor:checkRequiredProps",
+          "class": "FSUtils",
+          "method": "getAllPartitionPaths",
+          "file": "hudi-common/src/main/java/org/apache/hudi/common/fs/FSUtils.java",
+          "line": 266,
+          "via": "accessor:getBasePath",
           "gatesResolved": true,
           "gates": []
         },
         {
-          "class": "DynamoDBBasedImplicitPartitionKeyLockProvider",
-          "method": "DynamoDBBasedImplicitPartitionKeyLockProvider",
-          "file": "hudi-aws/src/main/java/org/apache/hudi/aws/transaction/lock/DynamoDBBasedImplicitPartitionKeyLockProvider.java",
-          "line": 55,
-          "via": "constant",
+          "class": "FSUtils",
+          "method": "getFilesInPartitions",
+          "file": "hudi-common/src/main/java/org/apache/hudi/common/fs/FSUtils.java",
+          "line": 278,
+          "via": "accessor:getBasePath",
           "gatesResolved": true,
           "gates": []
         },
         {
-          "class": "DynamoDBBasedImplicitPartitionKeyLockProvider",
-          "method": "getDynamoDBPartitionKey",
-          "file": "hudi-aws/src/main/java/org/apache/hudi/aws/transaction/lock/DynamoDBBasedImplicitPartitionKeyLockProvider.java",
-          "line": 97,
-          "via": "constant",
-          "gatesResolved": true,
-          "gates": []
-        },
-        {
-          "class": "HoodieTableMetaserverClient",
-          "method": "initOrGetTable",
-          "file": "hudi-platform-service/hudi-metaserver/hudi-metaserver-client/src/main/java/org/apache/hudi/common/table/HoodieTableMetaserverClient.java",
-          "line": 95,
-          "via": "constant",
+          "class": "PartitionBucketIndexHashingConfig",
+          "method": "getHashingConfigToLoad",
+          "file": "hudi-common/src/main/java/org/apache/hudi/common/model/PartitionBucketIndexHashingConfig.java",
+          "line": 188,
+          "via": "accessor:getBasePath",
           "gatesResolved": true,
           "gates": [
-            "if (e.getCause() instanceof NoSuchObjectException)"
+            "if (instant.isPresent())"
           ]
         },
         {
-          "class": "HoodieMetricsConfig",
-          "method": "getBasePath",
-          "file": "hudi-common/src/main/java/org/apache/hudi/common/config/metrics/HoodieMetricsConfig.java",
-          "line": 189,
-          "via": "constant",
+          "class": "PartitionBucketIndexHashingConfig",
+          "method": "getAllHashingConfig",
+          "file": "hudi-common/src/main/java/org/apache/hudi/common/model/PartitionBucketIndexHashingConfig.java",
+          "line": 209,
+          "via": "accessor:getBasePath",
+          "gatesResolved": true,
+          "gates": [
+            "if (metaClient.getStorage().exists(new StoragePath(metaClient.getArchiveHashingMetadataConfigPath())))"
+          ]
+        },
+        {
+          "class": "PartitionBucketIndexHashingConfig",
+          "method": "archiveHashingConfig",
+          "file": "hudi-common/src/main/java/org/apache/hudi/common/model/PartitionBucketIndexHashingConfig.java",
+          "line": 268,
+          "via": "accessor:getBasePath",
           "gatesResolved": true,
           "gates": []
         },
         {
-          "class": "HoodieMetricsConfig",
-          "method": "withPath",
-          "file": "hudi-common/src/main/java/org/apache/hudi/common/config/metrics/HoodieMetricsConfig.java",
-          "line": 409,
-          "via": "constant",
+          "class": "PartitionBucketIndexHashingConfig",
+          "method": "rollbackHashingConfig",
+          "file": "hudi-common/src/main/java/org/apache/hudi/common/model/PartitionBucketIndexHashingConfig.java",
+          "line": 339,
+          "via": "accessor:getBasePath",
+          "gatesResolved": true,
+          "gates": []
+        },
+        {
+          "class": "PartitionBucketIndexHashingConfig",
+          "method": "isHashingConfigExisted",
+          "file": "hudi-common/src/main/java/org/apache/hudi/common/model/PartitionBucketIndexHashingConfig.java",
+          "line": 363,
+          "via": "accessor:getBasePath",
+          "gatesResolved": true,
+          "gates": []
+        },
+        {
+          "class": "HoodieTableMetaClient",
+          "method": "isMetadataTable",
+          "file": "hudi-common/src/main/java/org/apache/hudi/common/table/HoodieTableMetaClient.java",
+          "line": 477,
+          "via": "accessor:getBasePath",
+          "gatesResolved": true,
+          "gates": []
+        },
+        {
+          "class": "TableSchemaResolver",
+          "method": "getTableParquetSchemaFromDataFile",
+          "file": "hudi-common/src/main/java/org/apache/hudi/common/table/TableSchemaResolver.java",
+          "line": 267,
+          "via": "accessor:getBasePath",
+          "gatesResolved": true,
+          "gates": [
+            "if (instantAndCommitMetadata.isPresent())",
+            "switch (metaClient.getTableType()) case MERGE_ON_READ"
+          ]
+        },
+        {
+          "class": "TableSchemaResolver",
+          "method": "schemaNotFoundError",
+          "file": "hudi-common/src/main/java/org/apache/hudi/common/table/TableSchemaResolver.java",
+          "line": 523,
+          "via": "accessor:getBasePath",
+          "gatesResolved": true,
+          "gates": []
+        },
+        {
+          "class": "HoodieCDCExtractor",
+          "method": "HoodieCDCExtractor",
+          "file": "hudi-common/src/main/java/org/apache/hudi/common/table/cdc/HoodieCDCExtractor.java",
+          "line": 103,
+          "via": "accessor:getBasePath",
+          "gatesResolved": true,
+          "gates": []
+        },
+        {
+          "class": "HoodieCDCExtractor",
+          "method": "parseWriteStat",
+          "file": "hudi-common/src/main/java/org/apache/hudi/common/table/cdc/HoodieCDCExtractor.java",
+          "line": 258,
+          "via": "accessor:getBasePath",
+          "gatesResolved": true,
+          "gates": []
+        },
+        {
+          "class": "BaseHoodieLogRecordReader",
+          "method": "scanInternal",
+          "file": "hudi-common/src/main/java/org/apache/hudi/common/table/log/BaseHoodieLogRecordReader.java",
+          "line": 226,
+          "via": "accessor:getBasePath",
+          "gatesResolved": true,
+          "gates": []
+        },
+        {
+          "class": "HoodieLogFormat",
+          "method": "newReader",
+          "file": "hudi-common/src/main/java/org/apache/hudi/common/table/log/HoodieLogFormat.java",
+          "line": 260,
+          "via": "accessor:getBasePath",
+          "gatesResolved": true,
+          "gates": [
+            "if (FSUtils.isNativeLogFile(logFile.getFileName()))"
+          ]
+        },
+        {
+          "class": "HoodieLogFormatReader",
+          "method": "HoodieLogFormatReader",
+          "file": "hudi-common/src/main/java/org/apache/hudi/common/table/log/HoodieLogFormatReader.java",
+          "line": 60,
+          "via": "accessor:getBasePath",
+          "gatesResolved": true,
+          "gates": []
+        },
+        {
+          "class": "HoodieFileGroupReader",
+          "method": "HoodieFileGroupReader",
+          "file": "hudi-common/src/main/java/org/apache/hudi/common/table/read/HoodieFileGroupReader.java",
+          "line": 162,
+          "via": "accessor:getBasePath",
+          "gatesResolved": true,
+          "gates": [
+            "if (storage == null)"
+          ]
+        },
+        {
+          "class": "TableState",
+          "method": "snapshotOf",
+          "file": "hudi-common/src/main/java/org/apache/hudi/common/table/read/TableState.java",
+          "line": 79,
+          "via": "accessor:getBasePath",
+          "gatesResolved": true,
+          "gates": []
+        },
+        {
+          "class": "TableState",
+          "method": "fromMetaClient",
+          "file": "hudi-common/src/main/java/org/apache/hudi/common/table/read/TableState.java",
+          "line": 114,
+          "via": "accessor:getBasePath",
           "gatesResolved": true,
           "gates": []
         }
       ],
       "coConfigs": [
         {
-          "key": "hoodie.fs.atomic_creation.support",
-          "sharedMethods": 1
-        },
-        {
           "key": "hoodie.storage.class",
-          "sharedMethods": 1
+          "sharedMethods": 116
         },
         {
-          "key": "hoodie.table.type",
-          "sharedMethods": 1
+          "key": "hoodie.table.format",
+          "sharedMethods": 17
         },
         {
-          "key": "hoodie.write.lock.max_wait_time_ms_between_retry",
-          "sharedMethods": 1
+          "key": "hoodie.metadata.enable",
+          "sharedMethods": 16
         },
         {
-          "key": "hoodie.write.lock.num_retries",
-          "sharedMethods": 1
+          "key": "hoodie.table.version",
+          "sharedMethods": 13
         },
         {
-          "key": "hoodie.write.lock.wait_time_ms",
-          "sharedMethods": 1
+          "key": "hoodie.partition.metafile.use.base.format",
+          "sharedMethods": 9
         },
         {
-          "key": "hoodie.write.lock.wait_time_ms_between_retry",
-          "sharedMethods": 1
+          "key": "hoodie.write.table.version",
+          "sharedMethods": 9
         },
         {
-          "key": "hoodie.write.lock.zookeeper.connection_timeout_ms",
-          "sharedMethods": 1
+          "key": "as.of.instant",
+          "sharedMethods": 7
         },
         {
-          "key": "hoodie.write.lock.zookeeper.session_timeout_ms",
-          "sharedMethods": 1
+          "key": "hoodie.clean.failed.writes.policy",
+          "sharedMethods": 7
         },
         {
-          "key": "hoodie.write.lock.zookeeper.url",
-          "sharedMethods": 1
+          "key": "hoodie.table.name",
+          "sharedMethods": 7
+        },
+        {
+          "key": "hoodie.internal.schema",
+          "sharedMethods": 6
+        },
+        {
+          "key": "hoodie.io.factory.class",
+          "sharedMethods": 6
+        },
+        {
+          "key": "hoodie.memory.merge.max.size",
+          "sharedMethods": 6
+        },
+        {
+          "key": "hoodie.rollback.using.markers",
+          "sharedMethods": 6
+        },
+        {
+          "key": "hoodie.timeline.layout.version",
+          "sharedMethods": 6
+        },
+        {
+          "key": "hoodie.timeline.path",
+          "sharedMethods": 6
+        },
+        {
+          "key": "hoodie.write.markers.type",
+          "sharedMethods": 6
+        },
+        {
+          "key": "hoodie.avro.schema",
+          "sharedMethods": 5
+        },
+        {
+          "key": "hoodie.datasource.merge.type",
+          "sharedMethods": 5
+        },
+        {
+          "key": "hoodie.memory.dfs.buffer.max.size",
+          "sharedMethods": 5
+        },
+        {
+          "key": "hoodie.merge.use.record.positions",
+          "sharedMethods": 5
+        },
+        {
+          "key": "hoodie.table.metadata.partitions",
+          "sharedMethods": 5
+        },
+        {
+          "key": "hoodie.table.partition.fields",
+          "sharedMethods": 5
+        },
+        {
+          "key": "hoodie.write.status.storage.level",
+          "sharedMethods": 5
+        },
+        {
+          "key": "hoodie.clean.commits.retained",
+          "sharedMethods": 4
+        },
+        {
+          "key": "hoodie.client.heartbeat.interval_in_ms",
+          "sharedMethods": 4
         }
       ],
       "gatingConditions": [
         {
-          "condition": "when (ValidationUtils.checkArgument(config.getConfig().getString(FILESYSTEM_LOCK_PATH_PROP_KEY, null) != null || config.getConfig().getString(HoodieWriteConfig.BAS...)",
-          "at": "FileSystemBasedLockProvider.checkRequiredProps (hudi-client/hudi-client-common/src/main/java/org/apache/hudi/client/transaction/lock/FileSystemBasedLockProvider.java:274)"
+          "condition": "if (tableConfig.getTableType().equals(HoodieTableType.MERGE_ON_READ))",
+          "at": "FlinkWriteHandleFactory.getFactory (hudi-client/hudi-flink-client/src/main/java/org/apache/hudi/io/FlinkWriteHandleFactory.java:62)"
         },
         {
-          "condition": "if (e.getCause() instanceof NoSuchObjectException)",
-          "at": "HoodieTableMetaserverClient.initOrGetTable (hudi-platform-service/hudi-metaserver/hudi-metaserver-client/src/main/java/org/apache/hudi/common/table/HoodieTableMetaserverClient.java:95)"
+          "condition": "if (instant.isPresent())",
+          "at": "PartitionBucketIndexHashingConfig.getHashingConfigToLoad (hudi-common/src/main/java/org/apache/hudi/common/model/PartitionBucketIndexHashingConfig.java:188)"
+        },
+        {
+          "condition": "if (metaClient.getStorage().exists(new StoragePath(metaClient.getArchiveHashingMetadataConfigPath())))",
+          "at": "PartitionBucketIndexHashingConfig.getAllHashingConfig (hudi-common/src/main/java/org/apache/hudi/common/model/PartitionBucketIndexHashingConfig.java:209)"
+        },
+        {
+          "condition": "if (instantAndCommitMetadata.isPresent())",
+          "at": "TableSchemaResolver.getTableParquetSchemaFromDataFile (hudi-common/src/main/java/org/apache/hudi/common/table/TableSchemaResolver.java:267)"
+        },
+        {
+          "condition": "switch (metaClient.getTableType()) case MERGE_ON_READ",
+          "at": "TableSchemaResolver.getTableParquetSchemaFromDataFile (hudi-common/src/main/java/org/apache/hudi/common/table/TableSchemaResolver.java:267)"
+        },
+        {
+          "condition": "if (FSUtils.isNativeLogFile(logFile.getFileName()))",
+          "at": "HoodieLogFormat.newReader (hudi-common/src/main/java/org/apache/hudi/common/table/log/HoodieLogFormat.java:260)"
+        },
+        {
+          "condition": "if (storage == null)",
+          "at": "HoodieFileGroupReader.HoodieFileGroupReader (hudi-common/src/main/java/org/apache/hudi/common/table/read/HoodieFileGroupReader.java:162)"
+        },
+        {
+          "condition": "if (timeGeneratorConfig.canReuseTimeGenerator())",
+          "at": "TimeGenerators.getTimeGenerator (hudi-common/src/main/java/org/apache/hudi/common/table/timeline/TimeGenerators.java:46)"
+        },
+        {
+          "condition": "if (null != input.getOperations())",
+          "at": "CompactionV1MigrationHandler.downgradeFrom (hudi-common/src/main/java/org/apache/hudi/common/table/timeline/versioning/compaction/CompactionV1MigrationHandler.java:58)"
+        },
+        {
+          "condition": "if (!partitionSet.isEmpty())",
+          "at": "AbstractTableFileSystemView.ensurePartitionsLoadedCorrectly (hudi-common/src/main/java/org/apache/hudi/common/table/view/AbstractTableFileSystemView.java:415)"
+        },
+        {
+          "condition": "if (isPartitionAvailableInStore(partition))",
+          "at": "IncrementalTimelineSyncFileSystemView.updatePartitionWriteFileGroups (hudi-common/src/main/java/org/apache/hudi/common/table/view/IncrementalTimelineSyncFileSystemView.java:273)"
+        },
+        {
+          "condition": "if (historicalSchemas == null || InternalSchemaUtils.searchSchema(versionID, historicalSchemas) == null)",
+          "at": "InternalSchemaCache.searchSchemaAndCache (hudi-common/src/main/java/org/apache/hudi/common/util/InternalSchemaCache.java:90)"
         }
       ],
-      "gatedBy": [],
+      "gatedBy": [
+        {
+          "key": "hoodie.storage.class",
+          "viaAccessor": "getStorage",
+          "at": "PartitionBucketIndexHashingConfig.getAllHashingConfig (hudi-common/src/main/java/org/apache/hudi/common/model/PartitionBucketIndexHashingConfig.java:209)"
+        },
+        {
+          "key": "_hoodie.time.generator.reuse.enable",
+          "viaAccessor": "canReuseTimeGenerator",
+          "at": "TimeGenerators.getTimeGenerator (hudi-common/src/main/java/org/apache/hudi/common/table/timeline/TimeGenerators.java:46)"
+        },
+        {
+          "key": "hoodie.metrics.on",
+          "viaAccessor": "isMetricsOn",
+          "at": "HoodieMetaSyncMetrics.HoodieMetaSyncMetrics (hudi-sync/hudi-sync-common/src/main/java/org/apache/hudi/sync/common/metrics/HoodieMetaSyncMetrics.java:62)"
+        }
+      ],
       "noExternalConsumer": false,
       "scalaReadSites": 0,
       "readContextResolved": true,
@@ -6548,12 +6781,6 @@
           "class": "HoodieWriteConfig",
           "file": "hudi-client/hudi-client-common/src/main/java/org/apache/hudi/config/HoodieWriteConfig.java",
           "line": 2812
-        },
-        {
-          "method": "getHudiTableBasePath",
-          "class": "StorageBasedLockConfig",
-          "file": "hudi-client/hudi-client-common/src/main/java/org/apache/hudi/config/StorageBasedLockConfig.java",
-          "line": 63
         }
       ],
       "aliasConstants": [],
@@ -6572,26 +6799,8 @@
       "shortCircuitHeuristic": "Candidate wrappers found textually: a method that returns an accessor's value on one branch and a literal on another, so the literal path never reads the key. The shape is matched, the attribution is not verified -- roughly half of these are real gates and the rest call the accessor incidentally. Open the cited file:line and confirm the literal return really bypasses this config before telling a user it does.",
       "engineDefaults": null,
       "callSiteDefaults": [],
-      "flinkOptions": [
-        {
-          "flinkOption": "path",
-          "flinkDefault": null,
-          "valueTransformed": false,
-          "how": "builder:withPath",
-          "at": "StreamerUtil (hudi-flink-datasource/hudi-flink/src/main/java/org/apache/hudi/util/StreamerUtil.java:262)"
-        }
-      ],
-      "flinkOptionNote": "On Flink this key is driven by a Flink option. 'fallbackKey': the job reads the Flink option and consults this key only when the Flink option is unset, so flinkDefault is the effective default. 'builder:<method>': the Flink write client copies the Flink option into this key, so with this key unset a Flink writer gets flinkDefault (valueTransformed: true means a unit conversion or other expression is applied at the cited line). An explicit hoodie.* key passed through the Flink table options is applied after the builder in FlinkWriteClients and wins; check the cited line for other builders.",
+      "flinkOptions": [],
       "readSites": [
-        {
-          "class": "StorageBasedLockProvider",
-          "method": "StorageBasedLockProvider",
-          "file": "hudi-client/hudi-client-common/src/main/java/org/apache/hudi/client/transaction/lock/StorageBasedLockProvider.java",
-          "line": 205,
-          "via": "accessor:getHudiTableBasePath",
-          "gatesResolved": true,
-          "gates": []
-        },
         {
           "class": "HoodieSparkBootstrapSchemaProvider",
           "method": "getBootstrapSourceSchemaParquet",
@@ -6773,6 +6982,15 @@
           "via": "scalaReference",
           "gatesResolved": true,
           "gates": []
+        },
+        {
+          "class": "BootstrapExecutor",
+          "method": "BootstrapExecutor",
+          "file": "hudi-utilities/src/main/java/org/apache/hudi/utilities/streamer/BootstrapExecutor.java",
+          "line": 132,
+          "via": "constant",
+          "gatesResolved": true,
+          "gates": []
         }
       ],
       "coConfigs": [
@@ -6853,6 +7071,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
+        {
           "key": "hoodie.bootstrap.index.class",
           "sharedMethods": 2
         },
@@ -6870,10 +7092,6 @@
         },
         {
           "key": "hoodie.datasource.write.keygenerator.type",
-          "sharedMethods": 2
-        },
-        {
-          "key": "hoodie.datasource.write.partitionpath.urlencode",
           "sharedMethods": 2
         }
       ],
@@ -9380,6 +9598,10 @@
           "sharedMethods": 1
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.bucket.index.max.num.buckets",
           "sharedMethods": 1
         },
@@ -9425,10 +9647,6 @@
         },
         {
           "key": "hoodie.datasource.hive_sync.enable",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.datasource.hive_sync.mode",
           "sharedMethods": 1
         }
       ],
@@ -9700,6 +9918,10 @@
           "sharedMethods": 3
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
+        {
           "key": "hoodie.index.type",
           "sharedMethods": 2
         },
@@ -9781,10 +10003,6 @@
         },
         {
           "key": "hoodie.index.bucket.engine",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.meta.fields.mode",
           "sharedMethods": 1
         }
       ],
@@ -10022,6 +10240,10 @@
           "sharedMethods": 1
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.bulkinsert.overwrite.operation.type",
           "sharedMethods": 1
         },
@@ -10095,10 +10317,6 @@
         },
         {
           "key": "hoodie.meta.fields.mode",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.partition.metafile.use.base.format",
           "sharedMethods": 1
         }
       ],
@@ -11598,6 +11816,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.common.diskmap.compression.enabled",
           "sharedMethods": 1
         },
@@ -11789,6 +12011,10 @@
         {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 4
+        },
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 3
         },
         {
           "key": "hoodie.archive.async",
@@ -12055,6 +12281,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.commits.retained",
           "sharedMethods": 1
         },
@@ -12124,10 +12354,6 @@
         },
         {
           "key": "hoodie.hfile.writes.allow.duplicates",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.keep.max.commits",
           "sharedMethods": 1
         }
       ],
@@ -12366,6 +12592,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 4
+        },
+        {
           "key": "hoodie.clean.hours.retained",
           "sharedMethods": 4
         },
@@ -12459,10 +12689,6 @@
         },
         {
           "key": "hoodie.hfile.block.cache.enabled",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.hfile.block.cache.size",
           "sharedMethods": 1
         }
       ],
@@ -12913,6 +13139,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 7
+        },
+        {
           "key": "hoodie.archive.automatic",
           "sharedMethods": 2
         },
@@ -13007,10 +13237,6 @@
         {
           "key": "hoodie.keep.min.commits",
           "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.meta.fields.mode",
-          "sharedMethods": 1
         }
       ],
       "gatingConditions": [
@@ -13052,6 +13278,11 @@
           "key": "hoodie.table.version",
           "viaAccessor": "getTableVersion",
           "at": "ScheduleCompactionActionExecutor.execute (hudi-client/hudi-client-common/src/main/java/org/apache/hudi/table/action/compact/ScheduleCompactionActionExecutor.java:95)"
+        },
+        {
+          "key": "hoodie.base.path",
+          "viaAccessor": "getBasePath",
+          "at": "BaseRollbackActionExecutor.doRollbackAndGetStats (hudi-client/hudi-client-common/src/main/java/org/apache/hudi/table/action/rollback/BaseRollbackActionExecutor.java:223)"
         },
         {
           "key": "hoodie.table.cdc.enabled",
@@ -13202,6 +13433,10 @@
           "sharedMethods": 3
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
+        {
           "key": "hoodie.clean.trigger.max.commits",
           "sharedMethods": 2
         },
@@ -13287,10 +13522,6 @@
         },
         {
           "key": "hoodie.metadata.bloom.filter.num.entries",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.bloom.filter.type",
           "sharedMethods": 1
         }
       ],
@@ -13476,6 +13707,10 @@
           "sharedMethods": 3
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
+        {
           "key": "hoodie.clean.trigger.max.commits",
           "sharedMethods": 2
         },
@@ -13557,10 +13792,6 @@
         },
         {
           "key": "hoodie.hfile.writes.allow.duplicates",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.bloom.filter.num.entries",
           "sharedMethods": 1
         }
       ],
@@ -13708,6 +13939,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
         {
           "key": "hoodie.clean.optimize.using.local.engine.context",
           "sharedMethods": 1
@@ -13959,6 +14194,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.failed.writes.policy",
           "sharedMethods": 1
         }
@@ -14066,6 +14305,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -14160,10 +14403,6 @@
         {
           "key": "hoodie.metadata.compact.max.delta.seconds",
           "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.compact.trigger.strategy",
-          "sharedMethods": 1
         }
       ],
       "gatingConditions": [
@@ -14172,7 +14411,13 @@
           "at": "CleanPlanActionExecutor.requestClean (hudi-client/hudi-client-common/src/main/java/org/apache/hudi/table/action/clean/CleanPlanActionExecutor.java:231)"
         }
       ],
-      "gatedBy": [],
+      "gatedBy": [
+        {
+          "key": "hoodie.base.path",
+          "viaAccessor": "getBasePath",
+          "at": "CleanPlanActionExecutor.requestClean (hudi-client/hudi-client-common/src/main/java/org/apache/hudi/table/action/clean/CleanPlanActionExecutor.java:231)"
+        }
+      ],
       "noExternalConsumer": false,
       "scalaReadSites": 0,
       "readContextResolved": true,
@@ -14271,6 +14516,10 @@
         {
           "key": "hoodie.prewrite.cleaner.policy",
           "sharedMethods": 2
+        },
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
         },
         {
           "key": "hoodie.storage.class",
@@ -14595,6 +14844,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
+        {
           "key": "hoodie.clean.commits.retained",
           "sharedMethods": 2
         },
@@ -14800,6 +15053,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
+        {
           "key": "hoodie.clean.commits.retained",
           "sharedMethods": 2
         },
@@ -14893,10 +15150,6 @@
         },
         {
           "key": "hoodie.metadata.bloom.filter.type",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.compact.max.delta.commits",
           "sharedMethods": 1
         }
       ],
@@ -15030,6 +15283,10 @@
         {
           "key": "hoodie.clean.trigger.max.commits",
           "sharedMethods": 2
+        },
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
         },
         {
           "key": "hoodie.clean.commits.retained",
@@ -15188,6 +15445,10 @@
         {
           "key": "hoodie.client.heartbeat.tolerable.misses",
           "sharedMethods": 5
+        },
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 4
         },
         {
           "key": "hoodie.storage.class",
@@ -15414,6 +15675,10 @@
         {
           "key": "hoodie.client.heartbeat.interval_in_ms",
           "sharedMethods": 5
+        },
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 4
         },
         {
           "key": "hoodie.storage.class",
@@ -16076,6 +16341,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clustering.async.enabled",
           "sharedMethods": 1
         },
@@ -16218,6 +16487,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 3
+        },
         {
           "key": "hoodie.clean.failed.writes.policy",
           "sharedMethods": 1
@@ -16428,6 +16701,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 3
+        },
         {
           "key": "hoodie.clustering.plan.strategy.max.num.groups",
           "sharedMethods": 3
@@ -16686,6 +16963,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
         {
           "key": "hoodie.client.heartbeat.interval_in_ms",
           "sharedMethods": 1
@@ -17004,6 +17285,10 @@
           "sharedMethods": 1
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.async.enabled",
           "sharedMethods": 1
         },
@@ -17069,10 +17354,6 @@
         },
         {
           "key": "hoodie.datasource.hive_sync.ignore_exceptions",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.datasource.hive_sync.jdbcurl",
           "sharedMethods": 1
         }
       ],
@@ -17222,6 +17503,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
         {
           "key": "hoodie.clustering.async.enabled",
           "sharedMethods": 1
@@ -17539,6 +17824,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
         {
           "key": "hoodie.clustering.plan.strategy.class",
           "sharedMethods": 1
@@ -18803,6 +19092,10 @@
           "sharedMethods": 3
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
+        {
           "key": "hoodie.clustering.plan.strategy.target.file.max.bytes",
           "sharedMethods": 2
         },
@@ -18948,6 +19241,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clustering.plan.partition.filter.mode",
           "sharedMethods": 1
         },
@@ -19077,6 +19374,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
         {
           "key": "hoodie.clustering.execution.strategy.class",
           "sharedMethods": 1
@@ -19537,6 +19838,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clustering.plan.partition.filter.mode",
           "sharedMethods": 1
         },
@@ -19993,6 +20298,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clustering.async.enabled",
           "sharedMethods": 1
         },
@@ -20308,7 +20617,16 @@
       "shortCircuits": [],
       "engineDefaults": null,
       "callSiteDefaults": [],
-      "flinkOptions": [],
+      "flinkOptions": [
+        {
+          "flinkOption": "write.precombine",
+          "flinkDefault": "false",
+          "valueTransformed": false,
+          "how": "builder:combineInput",
+          "at": "FlinkWriteClients (hudi-flink-datasource/hudi-flink/src/main/java/org/apache/hudi/util/FlinkWriteClients.java:178)"
+        }
+      ],
+      "flinkOptionNote": "On Flink this key is driven by a Flink option. 'fallbackKey': the job reads the Flink option and consults this key only when the Flink option is unset, so flinkDefault is the effective default. 'builder:<method>': the Flink write client copies the Flink option into this key, so with this key unset a Flink writer gets flinkDefault (valueTransformed: true means a unit conversion or other expression is applied at the cited line). An explicit hoodie.* key passed through the Flink table options is applied after the builder in FlinkWriteClients and wins; check the cited line for other builders.",
       "readSites": [
         {
           "class": "FlinkInsertCommitActionExecutor",
@@ -21319,6 +21637,10 @@
           "sharedMethods": 9
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 4
+        },
+        {
           "key": "hoodie.memory.dfs.buffer.max.size",
           "sharedMethods": 4
         },
@@ -21404,10 +21726,6 @@
         },
         {
           "key": "hoodie.record.size.estimator.class",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.table.recordkey.fields",
           "sharedMethods": 1
         }
       ],
@@ -21628,6 +21946,10 @@
           "sharedMethods": 7
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 4
+        },
+        {
           "key": "hoodie.memory.dfs.buffer.max.size",
           "sharedMethods": 4
         },
@@ -21713,10 +22035,6 @@
         },
         {
           "key": "hoodie.table.recordkey.fields",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.write.record.merge.mode",
           "sharedMethods": 1
         }
       ],
@@ -21934,6 +22252,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
+        {
           "key": "hoodie.clean.async.enabled",
           "sharedMethods": 2
         },
@@ -22011,10 +22333,6 @@
         },
         {
           "key": "hoodie.clean.fileversions.retained",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.clean.hours.retained",
           "sharedMethods": 1
         }
       ],
@@ -22228,6 +22546,10 @@
         },
         {
           "key": "hoodie.archive.beyond.savepoint",
+          "sharedMethods": 2
+        },
+        {
+          "key": "hoodie.base.path",
           "sharedMethods": 2
         },
         {
@@ -22650,6 +22972,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
+        {
           "key": "hoodie.prewrite.cleaner.policy",
           "sharedMethods": 2
         },
@@ -22941,6 +23267,10 @@
         {
           "key": "hoodie.compact.inline",
           "sharedMethods": 2
+        },
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
         },
         {
           "key": "hoodie.clean.commits.retained",
@@ -24085,6 +24415,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
+        {
           "key": "hoodie.clean.commits.retained",
           "sharedMethods": 1
         },
@@ -24237,6 +24571,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.common.diskmap.compression.enabled",
           "sharedMethods": 1
         },
@@ -24378,6 +24716,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
         {
           "key": "hoodie.compact.inline.max.delta.commits",
           "sharedMethods": 2
@@ -24617,12 +24959,6 @@
           "class": "ConsistencyGuardConfig",
           "file": "hudi-common/src/main/java/org/apache/hudi/common/fs/ConsistencyGuardConfig.java",
           "line": 98
-        },
-        {
-          "method": "buildMetadataConfig",
-          "class": "HoodieInputFormatUtils",
-          "file": "hudi-hadoop-mr/src/main/java/org/apache/hudi/hadoop/utils/HoodieInputFormatUtils.java",
-          "line": 486
         }
       ],
       "aliasConstants": [],
@@ -24686,36 +25022,15 @@
           "gates": [
             "if (enableConsistencyGuard)"
           ]
-        },
-        {
-          "class": "HoodieCopyOnWriteTableInputFormat",
-          "method": "listStatusForSnapshotMode",
-          "file": "hudi-hadoop-mr/src/main/java/org/apache/hudi/hadoop/HoodieCopyOnWriteTableInputFormat.java",
-          "line": 282,
-          "via": "accessor:buildMetadataConfig",
-          "gatesResolved": true,
-          "gates": []
-        },
-        {
-          "class": "HoodieROTablePathFilter",
-          "method": "accept",
-          "file": "hudi-hadoop-mr/src/main/java/org/apache/hudi/hadoop/HoodieROTablePathFilter.java",
-          "line": 224,
-          "via": "accessor:buildMetadataConfig",
-          "gatesResolved": true,
-          "gates": [
-            "if (baseDir != null)",
-            "if (nonEmpty(timestampAsOf))"
-          ]
         }
       ],
       "coConfigs": [
         {
-          "key": "hoodie.metadata.enable",
+          "key": "hoodie.base.path",
           "sharedMethods": 2
         },
         {
-          "key": "hoodie.storage.class",
+          "key": "hoodie.metadata.enable",
           "sharedMethods": 2
         },
         {
@@ -24815,21 +25130,13 @@
         {
           "condition": "if (enableConsistencyGuard)",
           "at": "RestoreToInstantProcedure.call (hudi-spark-datasource/hudi-spark/src/main/scala/org/apache/spark/sql/hudi/command/procedures/RestoreToInstantProcedure.scala:138)"
-        },
-        {
-          "condition": "if (baseDir != null)",
-          "at": "HoodieROTablePathFilter.accept (hudi-hadoop-mr/src/main/java/org/apache/hudi/hadoop/HoodieROTablePathFilter.java:224)"
-        },
-        {
-          "condition": "if (nonEmpty(timestampAsOf))",
-          "at": "HoodieROTablePathFilter.accept (hudi-hadoop-mr/src/main/java/org/apache/hudi/hadoop/HoodieROTablePathFilter.java:224)"
         }
       ],
       "gatedBy": [],
       "noExternalConsumer": false,
       "scalaReadSites": 2,
       "readContextResolved": true,
-      "readContextNote": "2 of 8 recorded read sites are in Scala (0 with no enclosing def found). Scala gating is shallower than Java's: `if` blocks and `&&`/`||` conjunctions are recovered, `match` arms and guards are not. Absence of a gate at a Scala site is weak evidence; check the cited line.",
+      "readContextNote": "2 of 6 recorded read sites are in Scala (0 with no enclosing def found). Scala gating is shallower than Java's: `if` blocks and `&&`/`||` conjunctions are recovered, `match` arms and guards are not. Absence of a gate at a Scala site is weak evidence; check the cited line.",
       "gatingHeuristic": "Conditions are recovered by text matching on enclosing if/switch blocks. They indicate where a read is conditional; they are not a complete or verified account of when the config takes effect. Confirm at the cited line."
     },
     {
@@ -24956,6 +25263,10 @@
           "sharedMethods": 3
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -25041,10 +25352,6 @@
         },
         {
           "key": "hoodie.metadata.compact.trigger.strategy",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.derive.from.datatable.clean.policy",
           "sharedMethods": 1
         }
       ],
@@ -25179,6 +25486,10 @@
           "sharedMethods": 3
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -25264,10 +25575,6 @@
         },
         {
           "key": "hoodie.metadata.compact.trigger.strategy",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.derive.from.datatable.clean.policy",
           "sharedMethods": 1
         }
       ],
@@ -25402,6 +25709,10 @@
           "sharedMethods": 3
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -25487,10 +25798,6 @@
         },
         {
           "key": "hoodie.metadata.compact.trigger.strategy",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.derive.from.datatable.clean.policy",
           "sharedMethods": 1
         }
       ],
@@ -26170,6 +26477,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
+        {
           "key": "hoodie.bootstrap.base.path",
           "sharedMethods": 2
         },
@@ -26183,10 +26494,6 @@
         },
         {
           "key": "hoodie.datasource.write.keygenerator.class",
-          "sharedMethods": 2
-        },
-        {
-          "key": "hoodie.datasource.write.partitionpath.field",
           "sharedMethods": 2
         }
       ],
@@ -26264,6 +26571,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
         {
           "key": "hoodie.datasource.adb.sync.drop_table_before_creation",
           "sharedMethods": 1
@@ -26408,6 +26719,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
         {
           "key": "hoodie.datasource.adb.sync.auto_create_database",
           "sharedMethods": 1
@@ -26901,6 +27216,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.datasource.adb.sync.auto_create_database",
           "sharedMethods": 1
         },
@@ -26980,6 +27299,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.datasource.hive_sync.database",
           "sharedMethods": 1
         },
@@ -27058,7 +27381,12 @@
           ]
         }
       ],
-      "coConfigs": [],
+      "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        }
+      ],
       "gatingConditions": [
         {
           "condition": "switch (syncClient.getTableType()) case MERGE_ON_READ",
@@ -30914,6 +31242,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.datasource.meta_sync.condition.sync",
           "sharedMethods": 1
         },
@@ -31604,6 +31936,10 @@
           "sharedMethods": 3
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
+        {
           "key": "hoodie.clustering.async.enabled",
           "sharedMethods": 2
         },
@@ -31613,10 +31949,6 @@
         },
         {
           "key": "hoodie.combine.before.upsert",
-          "sharedMethods": 2
-        },
-        {
-          "key": "hoodie.datasource.hive_sync.bucket_sync",
           "sharedMethods": 2
         }
       ],
@@ -32496,6 +32828,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
+        {
           "key": "hoodie.datasource.hive_sync.table",
           "sharedMethods": 2
         },
@@ -32589,10 +32925,6 @@
         },
         {
           "key": "hoodie.datasource.hive_sync.table.strategy",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.datasource.hive_sync.table_properties",
           "sharedMethods": 1
         }
       ],
@@ -32932,7 +33264,7 @@
           "sharedMethods": 2
         },
         {
-          "key": "hoodie.bucket.index.hash.field",
+          "key": "hoodie.base.path",
           "sharedMethods": 1
         }
       ],
@@ -33779,6 +34111,10 @@
         {
           "key": "hoodie.datasource.hive_sync.mode",
           "sharedMethods": 2
+        },
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
         },
         {
           "key": "hoodie.datasource.hive_sync.partition_extractor_class",
@@ -35126,6 +35462,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 5
+        },
+        {
           "key": "hoodie.datasource.write.table.type",
           "sharedMethods": 2
         },
@@ -35500,6 +35840,10 @@
           "sharedMethods": 4
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 3
+        },
+        {
           "key": "hoodie.datasource.hive_sync.batch_num",
           "sharedMethods": 3
         },
@@ -35581,10 +35925,6 @@
         },
         {
           "key": "hoodie.datasource.adb.sync.schema_string_length_threshold",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.datasource.adb.sync.serde_properties",
           "sharedMethods": 1
         }
       ],
@@ -36990,6 +37330,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clustering.async.enabled",
           "sharedMethods": 1
         },
@@ -37083,10 +37427,6 @@
         },
         {
           "key": "hoodie.datasource.hive_sync.sync_comment",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.datasource.hive_sync.table",
           "sharedMethods": 1
         }
       ],
@@ -37882,6 +38222,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
+        {
           "key": "hoodie.streamer.source.hoodieincr.data.datasource.options",
           "sharedMethods": 2
         },
@@ -38220,6 +38564,10 @@
         {
           "key": "hoodie.datasource.read.incr.fallback.fulltablescan.enable",
           "sharedMethods": 5
+        },
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 4
         },
         {
           "key": "as.of.instant",
@@ -38657,6 +39005,10 @@
           "sharedMethods": 5
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 4
+        },
+        {
           "key": "as.of.instant",
           "sharedMethods": 3
         },
@@ -38832,6 +39184,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 3
+        },
         {
           "key": "as.of.instant",
           "sharedMethods": 2
@@ -39435,6 +39791,10 @@
           "sharedMethods": 5
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 4
+        },
+        {
           "key": "hoodie.datasource.query.type",
           "sharedMethods": 3
         },
@@ -39679,6 +40039,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
+        {
           "key": "hoodie.datasource.read.incr.fallback.fulltablescan.enable",
           "sharedMethods": 2
         },
@@ -39901,6 +40265,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
         {
           "key": "hoodie.datasource.read.begin.instanttime",
           "sharedMethods": 1
@@ -40307,6 +40675,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 3
+        },
+        {
           "key": "as.of.instant",
           "sharedMethods": 2
         },
@@ -40585,6 +40957,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
         {
           "key": "hoodie.datasource.read.create.filesystem.relation",
           "sharedMethods": 1
@@ -43591,6 +43967,10 @@
           "sharedMethods": 4
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 3
+        },
+        {
           "key": "hoodie.datasource.write.hive_style_partitioning",
           "sharedMethods": 3
         },
@@ -43660,10 +44040,6 @@
         },
         {
           "key": "hoodie.datasource.hive_sync.table",
-          "sharedMethods": 2
-        },
-        {
-          "key": "hoodie.datasource.hive_sync.use_jdbc",
           "sharedMethods": 2
         }
       ],
@@ -44064,6 +44440,10 @@
           "sharedMethods": 5
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 4
+        },
+        {
           "key": "hoodie.compaction.payload.class",
           "sharedMethods": 4
         },
@@ -44109,10 +44489,6 @@
         },
         {
           "key": "hoodie.table.storage.layout",
-          "sharedMethods": 3
-        },
-        {
-          "key": "hoodie.vector.columns",
           "sharedMethods": 3
         }
       ],
@@ -45147,6 +45523,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 3
+        },
+        {
           "key": "hoodie.datasource.write.drop.partition.columns",
           "sharedMethods": 3
         },
@@ -45240,10 +45620,6 @@
         },
         {
           "key": "hoodie.datasource.hive_sync.serde_properties",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.datasource.hive_sync.skip_ro_suffix",
           "sharedMethods": 1
         }
       ],
@@ -46270,6 +46646,10 @@
         },
         {
           "key": "hoodie.avro.schema",
+          "sharedMethods": 1
+        },
+        {
+          "key": "hoodie.base.path",
           "sharedMethods": 1
         },
         {
@@ -47759,6 +48139,10 @@
           "sharedMethods": 4
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 3
+        },
+        {
           "key": "hoodie.datasource.write.operation",
           "sharedMethods": 3
         },
@@ -48146,6 +48530,10 @@
           "sharedMethods": 4
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 3
+        },
+        {
           "key": "hoodie.datasource.hive_sync.enable",
           "sharedMethods": 3
         },
@@ -48175,10 +48563,6 @@
         },
         {
           "key": "hoodie.table.complex.keygenerator.encoding",
-          "sharedMethods": 3
-        },
-        {
-          "key": "hoodie.table.format",
           "sharedMethods": 3
         }
       ],
@@ -48687,6 +49071,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 3
+        },
+        {
           "key": "hoodie.auto.adjust.lock.configs",
           "sharedMethods": 1
         },
@@ -48780,10 +49168,6 @@
         },
         {
           "key": "hoodie.keep.min.commits",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.bloom.filter.num.entries",
           "sharedMethods": 1
         }
       ],
@@ -49319,7 +49703,12 @@
           "gates": []
         }
       ],
-      "coConfigs": [],
+      "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        }
+      ],
       "gatingConditions": [],
       "gatedBy": [],
       "noExternalConsumer": false,
@@ -50663,6 +51052,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.consistency.check.enabled",
           "sharedMethods": 1
         },
@@ -50900,7 +51293,12 @@
           "gates": []
         }
       ],
-      "coConfigs": [],
+      "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        }
+      ],
       "gatingConditions": [
         {
           "condition": "when (config.isFailOnInlineTableServiceExceptionEnabled() || !(t instanceof Exception)))",
@@ -51363,6 +51761,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 3
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -51456,10 +51858,6 @@
         },
         {
           "key": "hoodie.metadata.compact.max.delta.seconds",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.compact.trigger.strategy",
           "sharedMethods": 1
         }
       ],
@@ -52303,6 +52701,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
+        {
           "key": "hoodie.common.diskmap.compression.enabled",
           "sharedMethods": 1
         },
@@ -52490,6 +52892,10 @@
         {
           "key": "hoodie.filesystem.view.type",
           "sharedMethods": 2
+        },
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
         },
         {
           "key": "hoodie.clean.failed.writes.policy",
@@ -52700,6 +53106,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.filesystem.view.remote.response.charset",
           "sharedMethods": 1
         },
@@ -52855,6 +53265,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
         {
           "key": "hoodie.filesystem.view.remote.timeout.secs",
           "sharedMethods": 2
@@ -53848,6 +54262,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.datasource.write.operation",
           "sharedMethods": 1
         },
@@ -53999,6 +54417,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
         {
           "key": "hoodie.filesystem.view.incr.timeline.sync.enable",
           "sharedMethods": 1
@@ -54897,6 +55319,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.filesystem.view.remote.retry.enable",
           "sharedMethods": 1
         },
@@ -55063,6 +55489,10 @@
         {
           "key": "hoodie.write.markers.type",
           "sharedMethods": 2
+        },
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
         },
         {
           "key": "hoodie.file.listing.parallelism",
@@ -55517,6 +55947,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.gcp.bigquery.sync.big_lake_connection_id",
           "sharedMethods": 1
         },
@@ -55615,6 +56049,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
         {
           "key": "hoodie.gcp.bigquery.sync.dataset_name",
           "sharedMethods": 1
@@ -55850,6 +56288,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.gcp.bigquery.sync.dataset_name",
           "sharedMethods": 1
         },
@@ -55931,6 +56373,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
         {
           "key": "hoodie.gcp.bigquery.sync.dataset_name",
           "sharedMethods": 1
@@ -56104,6 +56550,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
         {
           "key": "hoodie.gcp.bigquery.sync.dataset_name",
           "sharedMethods": 1
@@ -56488,6 +56938,10 @@
           "sharedMethods": 3
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -56573,10 +57027,6 @@
         },
         {
           "key": "hoodie.metadata.bloom.filter.type",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.compact.max.delta.commits",
           "sharedMethods": 1
         }
       ],
@@ -56679,6 +57129,10 @@
           "sharedMethods": 3
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -56764,10 +57218,6 @@
         },
         {
           "key": "hoodie.metadata.bloom.filter.type",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.compact.max.delta.commits",
           "sharedMethods": 1
         }
       ],
@@ -56875,6 +57325,10 @@
           "sharedMethods": 3
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -56960,10 +57414,6 @@
         },
         {
           "key": "hoodie.metadata.bloom.filter.type",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.compact.max.delta.commits",
           "sharedMethods": 1
         }
       ],
@@ -57186,6 +57636,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
+        {
           "key": "hoodie.hfile.compression.algorithm",
           "sharedMethods": 2
         },
@@ -57279,10 +57733,6 @@
         },
         {
           "key": "hoodie.keep.max.commits",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.keep.min.commits",
           "sharedMethods": 1
         }
       ],
@@ -57399,6 +57849,10 @@
         {
           "key": "hoodie.hfile.bloom.filter.enabled",
           "sharedMethods": 2
+        },
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
         },
         {
           "key": "hoodie.hfile.block.size",
@@ -57675,6 +58129,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -57764,10 +58222,6 @@
         },
         {
           "key": "hoodie.metadata.bloom.filter.type",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.compact.max.delta.commits",
           "sharedMethods": 1
         }
       ],
@@ -58841,6 +59295,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 4
+        },
+        {
           "key": "hoodie.metadata.index.expression.column",
           "sharedMethods": 3
         },
@@ -59346,6 +59804,10 @@
           "sharedMethods": 1
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.bucket.index.num.buckets",
           "sharedMethods": 1
         },
@@ -59391,10 +59853,6 @@
         },
         {
           "key": "hoodie.datasource.write.drop.partition.columns",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.datasource.write.hive_style_partitioning",
           "sharedMethods": 1
         }
       ],
@@ -59853,6 +60311,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 6
+        },
         {
           "key": "hoodie.merge.use.record.positions",
           "sharedMethods": 5
@@ -60449,6 +60911,10 @@
           "sharedMethods": 10
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 6
+        },
+        {
           "key": "hoodie.avro.schema.external.transformation",
           "sharedMethods": 1
         },
@@ -60534,10 +61000,6 @@
         },
         {
           "key": "hoodie.parquet.max.file.size",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.parquet.page.size",
           "sharedMethods": 1
         }
       ],
@@ -61163,6 +61625,10 @@
           "sharedMethods": 4
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 3
+        },
+        {
           "key": "hoodie.clean.fileversions.retained",
           "sharedMethods": 2
         },
@@ -61248,10 +61714,6 @@
         },
         {
           "key": "hoodie.hfile.bloom.filter.enabled",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.hfile.writes.allow.duplicates",
           "sharedMethods": 1
         }
       ],
@@ -61412,6 +61874,10 @@
           "sharedMethods": 4
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 3
+        },
+        {
           "key": "hoodie.clean.fileversions.retained",
           "sharedMethods": 2
         },
@@ -61497,10 +61963,6 @@
         },
         {
           "key": "hoodie.hfile.bloom.filter.enabled",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.hfile.writes.allow.duplicates",
           "sharedMethods": 1
         }
       ],
@@ -63197,6 +63659,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.bulkinsert.sort.suffix.record_key",
           "sharedMethods": 1
         },
@@ -63816,7 +64282,16 @@
       "shortCircuits": [],
       "engineDefaults": null,
       "callSiteDefaults": [],
-      "flinkOptions": [],
+      "flinkOptions": [
+        {
+          "flinkOption": "write.log_block.size",
+          "flinkDefault": "128",
+          "valueTransformed": true,
+          "how": "builder:logFileDataBlockMaxSize",
+          "at": "FlinkWriteClients (hudi-flink-datasource/hudi-flink/src/main/java/org/apache/hudi/util/FlinkWriteClients.java:228)"
+        }
+      ],
+      "flinkOptionNote": "On Flink this key is driven by a Flink option. 'fallbackKey': the job reads the Flink option and consults this key only when the Flink option is unset, so flinkDefault is the effective default. 'builder:<method>': the Flink write client copies the Flink option into this key, so with this key unset a Flink writer gets flinkDefault (valueTransformed: true means a unit conversion or other expression is applied at the cited line). An explicit hoodie.* key passed through the Flink table options is applied after the builder in FlinkWriteClients and wins; check the cited line for other builders.",
       "readSites": [
         {
           "class": "HoodieCDCLogger",
@@ -63923,7 +64398,16 @@
       "shortCircuits": [],
       "engineDefaults": null,
       "callSiteDefaults": [],
-      "flinkOptions": [],
+      "flinkOptions": [
+        {
+          "flinkOption": "write.log.max.size",
+          "flinkDefault": "1024",
+          "valueTransformed": true,
+          "how": "builder:logFileMaxSize",
+          "at": "FlinkWriteClients (hudi-flink-datasource/hudi-flink/src/main/java/org/apache/hudi/util/FlinkWriteClients.java:229)"
+        }
+      ],
+      "flinkOptionNote": "On Flink this key is driven by a Flink option. 'fallbackKey': the job reads the Flink option and consults this key only when the Flink option is unset, so flinkDefault is the effective default. 'builder:<method>': the Flink write client copies the Flink option into this key, so with this key unset a Flink writer gets flinkDefault (valueTransformed: true means a unit conversion or other expression is applied at the cited line). An explicit hoodie.* key passed through the Flink table options is applied after the builder in FlinkWriteClients and wins; check the cited line for other builders.",
       "readSites": [
         {
           "class": "HoodieNativeLogAppendHandle",
@@ -63977,6 +64461,10 @@
         {
           "key": "hoodie.write.table.version",
           "sharedMethods": 3
+        },
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
         },
         {
           "key": "hoodie.allow.operation.metadata.field",
@@ -64493,6 +64981,10 @@
         {
           "key": "hoodie.write.markers.type",
           "sharedMethods": 18
+        },
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 4
         },
         {
           "key": "hoodie.table.format",
@@ -65212,6 +65704,10 @@
           "sharedMethods": 6
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 3
+        },
+        {
           "key": "hoodie.internal.schema",
           "sharedMethods": 3
         },
@@ -65383,6 +65879,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 5
+        },
         {
           "key": "hoodie.storage.class",
           "sharedMethods": 5
@@ -65713,6 +66213,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 6
+        },
+        {
           "key": "hoodie.memory.compaction.max.size",
           "sharedMethods": 6
         },
@@ -65963,6 +66467,10 @@
           "sharedMethods": 3
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
+        {
           "key": "hoodie.memory.dfs.buffer.max.size",
           "sharedMethods": 2
         },
@@ -66139,6 +66647,10 @@
           "sharedMethods": 3
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
+        {
           "key": "hoodie.partition.metafile.use.base.format",
           "sharedMethods": 2
         },
@@ -66273,6 +66785,10 @@
         {
           "key": "hoodie.table.cdc.enabled",
           "sharedMethods": 2
+        },
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
         },
         {
           "key": "hoodie.compact.inline",
@@ -66658,6 +67174,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 5
+        },
         {
           "key": "hoodie.internal.schema",
           "sharedMethods": 5
@@ -69160,6 +69680,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
+        {
           "key": "hoodie.datasource.hive_sync.omit_metadata_fields",
           "sharedMethods": 1
         },
@@ -69276,6 +69800,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
         {
           "key": "hoodie.datasource.hive_sync.mode",
           "sharedMethods": 1
@@ -69686,6 +70214,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
         {
           "key": "hoodie.datasource.hive_sync.skip_ro_suffix",
           "sharedMethods": 1
@@ -70165,6 +70697,10 @@
           "sharedMethods": 1
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.failed.writes.policy",
           "sharedMethods": 1
         },
@@ -70259,6 +70795,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
         {
           "key": "hoodie.metadata.skip.zero.size.files.on.initialize",
           "sharedMethods": 1
@@ -70562,6 +71102,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.hfile.bloom.filter.enabled",
           "sharedMethods": 1
         },
@@ -70695,6 +71239,10 @@
           "sharedMethods": 3
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
+        {
           "key": "hoodie.hfile.bloom.filter.enabled",
           "sharedMethods": 2
         },
@@ -70784,10 +71332,6 @@
         },
         {
           "key": "hoodie.keep.min.commits",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.compact.max.delta.commits",
           "sharedMethods": 1
         }
       ],
@@ -70949,6 +71493,10 @@
           "sharedMethods": 3
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
+        {
           "key": "hoodie.bloom.index.parallelism",
           "sharedMethods": 2
         },
@@ -71038,10 +71586,6 @@
         },
         {
           "key": "hoodie.index.name",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.keep.max.commits",
           "sharedMethods": 1
         }
       ],
@@ -71150,6 +71694,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -71243,10 +71791,6 @@
         },
         {
           "key": "hoodie.metadata.compact.trigger.strategy",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.derive.from.datatable.clean.policy",
           "sharedMethods": 1
         }
       ],
@@ -71329,6 +71873,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -71423,10 +71971,6 @@
         {
           "key": "hoodie.metadata.compact.trigger.strategy",
           "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.derive.from.datatable.clean.policy",
-          "sharedMethods": 1
         }
       ],
       "gatingConditions": [],
@@ -71506,6 +72050,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
         {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
@@ -71600,10 +72148,6 @@
         },
         {
           "key": "hoodie.metadata.compact.max.delta.seconds",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.derive.from.datatable.clean.policy",
           "sharedMethods": 1
         }
       ],
@@ -71694,6 +72238,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -71788,10 +72336,6 @@
         {
           "key": "hoodie.metadata.compact.max.delta.seconds",
           "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.compact.trigger.strategy",
-          "sharedMethods": 1
         }
       ],
       "gatingConditions": [],
@@ -71881,6 +72425,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.file.listing.parallelism",
           "sharedMethods": 1
         },
@@ -71932,6 +72480,12 @@
       "parseWarnings": [],
       "module": "hudi-common",
       "accessors": [
+        {
+          "method": "buildMetadataConfig",
+          "class": "HoodieInputFormatUtils",
+          "file": "hudi-hadoop-mr/src/main/java/org/apache/hudi/hadoop/utils/HoodieInputFormatUtils.java",
+          "line": 486
+        },
         {
           "method": "isEnabled",
           "class": "HoodieMetadataConfig",
@@ -72179,6 +72733,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 16
+        },
+        {
           "key": "hoodie.metadata.index.column.stats.enable",
           "sharedMethods": 4
         },
@@ -72196,6 +72754,10 @@
         },
         {
           "key": "hoodie.metadata.record.level.index.enable",
+          "sharedMethods": 3
+        },
+        {
+          "key": "hoodie.storage.class",
           "sharedMethods": 3
         },
         {
@@ -72235,10 +72797,6 @@
           "sharedMethods": 2
         },
         {
-          "key": "hoodie.storage.class",
-          "sharedMethods": 2
-        },
-        {
           "key": "hoodie.table.format",
           "sharedMethods": 2
         },
@@ -72272,10 +72830,6 @@
         },
         {
           "key": "hoodie.compact.inline",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.compact.inline.max.delta.commits",
           "sharedMethods": 1
         }
       ],
@@ -72349,6 +72903,11 @@
           "key": "hoodie.table.metadata.partitions",
           "viaAccessor": "getMetadataPartitions",
           "at": "HoodieTable.shouldExecuteMetadataTableDeletion (hudi-client/hudi-client-common/src/main/java/org/apache/hudi/table/HoodieTable.java:1217)"
+        },
+        {
+          "key": "hoodie.base.path",
+          "viaAccessor": "getBasePath",
+          "at": "ThreeToFourUpgradeHandler.upgrade (hudi-client/hudi-client-common/src/main/java/org/apache/hudi/table/upgrade/ThreeToFourUpgradeHandler.java:56)"
         },
         {
           "key": "hoodie.release.resource.on.completion.enable",
@@ -73937,6 +74496,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
         {
           "key": "hoodie.client.heartbeat.interval_in_ms",
           "sharedMethods": 1
@@ -75587,6 +76150,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.metadata.index.expression.file.group.count",
           "sharedMethods": 1
         }
@@ -76407,6 +76974,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.metadata.global.record.level.index.max.filegroup.count",
           "sharedMethods": 1
         },
@@ -76510,6 +77081,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -76603,10 +77178,6 @@
         },
         {
           "key": "hoodie.metadata.compact.max.delta.seconds",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.compact.trigger.strategy",
           "sharedMethods": 1
         }
       ],
@@ -76697,6 +77268,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -76790,10 +77365,6 @@
         },
         {
           "key": "hoodie.metadata.compact.max.delta.seconds",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.compact.trigger.strategy",
           "sharedMethods": 1
         }
       ],
@@ -77037,6 +77608,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 3
+        },
+        {
           "key": "hoodie.metadata.record.level.index.enable",
           "sharedMethods": 3
         },
@@ -77137,6 +77712,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -77230,10 +77809,6 @@
         },
         {
           "key": "hoodie.metadata.compact.max.delta.seconds",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.compact.trigger.strategy",
           "sharedMethods": 1
         }
       ],
@@ -77382,6 +77957,10 @@
         {
           "key": "hoodie.write.record.merge.mode",
           "sharedMethods": 2
+        },
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
         },
         {
           "key": "hoodie.io.factory.class",
@@ -78855,6 +79434,10 @@
           "sharedMethods": 4
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 3
+        },
+        {
           "key": "hoodie.metadata.enable",
           "sharedMethods": 3
         },
@@ -79658,6 +80241,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
         {
           "key": "hoodie.metadata.auto.initialize",
           "sharedMethods": 1
@@ -80612,6 +81199,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 3
+        },
+        {
           "key": "hoodie.metadata.enable",
           "sharedMethods": 2
         },
@@ -81185,6 +81776,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
+        {
           "key": "hoodie.metrics.reporter.metricsname.prefix",
           "sharedMethods": 1
         }
@@ -81396,6 +81991,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -81465,10 +82064,6 @@
         },
         {
           "key": "hoodie.hfile.writes.allow.duplicates",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.keep.max.commits",
           "sharedMethods": 1
         }
       ],
@@ -81699,6 +82294,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -81768,10 +82367,6 @@
         },
         {
           "key": "hoodie.hfile.writes.allow.duplicates",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.keep.max.commits",
           "sharedMethods": 1
         }
       ],
@@ -81927,6 +82522,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -81996,10 +82595,6 @@
         },
         {
           "key": "hoodie.hfile.writes.allow.duplicates",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.keep.max.commits",
           "sharedMethods": 1
         }
       ],
@@ -82155,6 +82750,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -82224,10 +82823,6 @@
         },
         {
           "key": "hoodie.hfile.writes.allow.duplicates",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.keep.max.commits",
           "sharedMethods": 1
         }
       ],
@@ -82383,6 +82978,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -82452,10 +83051,6 @@
         },
         {
           "key": "hoodie.hfile.writes.allow.duplicates",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.keep.max.commits",
           "sharedMethods": 1
         }
       ],
@@ -82611,6 +83206,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -82680,10 +83279,6 @@
         },
         {
           "key": "hoodie.hfile.writes.allow.duplicates",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.keep.max.commits",
           "sharedMethods": 1
         }
       ],
@@ -82839,6 +83434,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -82908,10 +83507,6 @@
         },
         {
           "key": "hoodie.hfile.writes.allow.duplicates",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.keep.max.commits",
           "sharedMethods": 1
         }
       ],
@@ -83084,6 +83679,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -83161,10 +83760,6 @@
         },
         {
           "key": "hoodie.keep.min.commits",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.bloom.filter.num.entries",
           "sharedMethods": 1
         }
       ],
@@ -83310,6 +83905,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -83399,10 +83998,6 @@
         },
         {
           "key": "hoodie.metadata.compact.max.delta.commits",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.compact.max.delta.seconds",
           "sharedMethods": 1
         }
       ],
@@ -83538,6 +84133,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -83631,10 +84230,6 @@
         },
         {
           "key": "hoodie.metadata.compact.max.delta.seconds",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.compact.trigger.strategy",
           "sharedMethods": 1
         }
       ],
@@ -83772,6 +84367,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -83861,10 +84460,6 @@
         },
         {
           "key": "hoodie.metadata.compact.max.delta.commits",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.compact.max.delta.seconds",
           "sharedMethods": 1
         }
       ],
@@ -84110,6 +84705,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -84199,10 +84798,6 @@
         },
         {
           "key": "hoodie.metadata.compact.max.delta.commits",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.compact.max.delta.seconds",
           "sharedMethods": 1
         }
       ],
@@ -84345,6 +84940,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -84434,10 +85033,6 @@
         },
         {
           "key": "hoodie.metadata.compact.max.delta.commits",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.compact.max.delta.seconds",
           "sharedMethods": 1
         }
       ],
@@ -84748,6 +85343,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -84833,10 +85432,6 @@
         },
         {
           "key": "hoodie.metadata.bloom.filter.type",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.compact.max.delta.commits",
           "sharedMethods": 1
         }
       ],
@@ -84971,6 +85566,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -85060,10 +85659,6 @@
         },
         {
           "key": "hoodie.metadata.compact.max.delta.commits",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.compact.max.delta.seconds",
           "sharedMethods": 1
         }
       ],
@@ -85198,6 +85793,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -85287,10 +85886,6 @@
         },
         {
           "key": "hoodie.metadata.compact.max.delta.commits",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.compact.max.delta.seconds",
           "sharedMethods": 1
         }
       ],
@@ -85429,6 +86024,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -85514,10 +86113,6 @@
         },
         {
           "key": "hoodie.metadata.bloom.filter.type",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.compact.max.delta.commits",
           "sharedMethods": 1
         }
       ],
@@ -85656,6 +86251,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -85741,10 +86340,6 @@
         },
         {
           "key": "hoodie.metadata.bloom.filter.type",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.compact.max.delta.commits",
           "sharedMethods": 1
         }
       ],
@@ -86053,6 +86648,10 @@
           "sharedMethods": 4
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 3
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -86126,10 +86725,6 @@
         },
         {
           "key": "hoodie.keep.max.commits",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.keep.min.commits",
           "sharedMethods": 1
         }
       ],
@@ -86310,6 +86905,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -86399,10 +86998,6 @@
         },
         {
           "key": "hoodie.metadata.compact.max.delta.commits",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.compact.max.delta.seconds",
           "sharedMethods": 1
         }
       ],
@@ -86674,6 +87269,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -86747,10 +87346,6 @@
         },
         {
           "key": "hoodie.keep.max.commits",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.keep.min.commits",
           "sharedMethods": 1
         }
       ],
@@ -86902,6 +87497,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -86975,10 +87574,6 @@
         },
         {
           "key": "hoodie.keep.max.commits",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.keep.min.commits",
           "sharedMethods": 1
         }
       ],
@@ -87130,6 +87725,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -87203,10 +87802,6 @@
         },
         {
           "key": "hoodie.keep.max.commits",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.keep.min.commits",
           "sharedMethods": 1
         }
       ],
@@ -87358,6 +87953,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -87431,10 +88030,6 @@
         },
         {
           "key": "hoodie.keep.max.commits",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.keep.min.commits",
           "sharedMethods": 1
         }
       ],
@@ -87599,6 +88194,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -87668,10 +88267,6 @@
         },
         {
           "key": "hoodie.hfile.writes.allow.duplicates",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.keep.max.commits",
           "sharedMethods": 1
         }
       ],
@@ -87823,6 +88418,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -87896,10 +88495,6 @@
         },
         {
           "key": "hoodie.keep.max.commits",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.keep.min.commits",
           "sharedMethods": 1
         }
       ],
@@ -88172,6 +88767,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -88265,10 +88864,6 @@
         },
         {
           "key": "hoodie.metadata.compact.max.delta.seconds",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.compact.trigger.strategy",
           "sharedMethods": 1
         }
       ],
@@ -88450,6 +89045,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -88527,10 +89126,6 @@
         },
         {
           "key": "hoodie.keep.min.commits",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.bloom.filter.num.entries",
           "sharedMethods": 1
         }
       ],
@@ -88681,6 +89276,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
         {
           "key": "hoodie.metrics.on",
           "sharedMethods": 1
@@ -89375,7 +89974,16 @@
       "shortCircuits": [],
       "engineDefaults": null,
       "callSiteDefaults": [],
-      "flinkOptions": [],
+      "flinkOptions": [
+        {
+          "flinkOption": "write.parquet.block.size",
+          "flinkDefault": "120",
+          "valueTransformed": true,
+          "how": "builder:parquetBlockSize",
+          "at": "FlinkWriteClients (hudi-flink-datasource/hudi-flink/src/main/java/org/apache/hudi/util/FlinkWriteClients.java:230)"
+        }
+      ],
+      "flinkOptionNote": "On Flink this key is driven by a Flink option. 'fallbackKey': the job reads the Flink option and consults this key only when the Flink option is unset, so flinkDefault is the effective default. 'builder:<method>': the Flink write client copies the Flink option into this key, so with this key unset a Flink writer gets flinkDefault (valueTransformed: true means a unit conversion or other expression is applied at the cited line). An explicit hoodie.* key passed through the Flink table options is applied after the builder in FlinkWriteClients and wins; check the cited line for other builders.",
       "readSites": [
         {
           "class": "HoodieInternalRowFileWriterFactory",
@@ -89816,6 +90424,10 @@
           "sharedMethods": 3
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
+        {
           "key": "hoodie.hfile.bloom.filter.enabled",
           "sharedMethods": 2
         },
@@ -89885,10 +90497,6 @@
         },
         {
           "key": "hoodie.embed.timeline.server",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.file.listing.parallelism",
           "sharedMethods": 1
         }
       ],
@@ -90089,6 +90697,10 @@
         },
         {
           "key": "hoodie.avro.schema",
+          "sharedMethods": 1
+        },
+        {
+          "key": "hoodie.base.path",
           "sharedMethods": 1
         },
         {
@@ -90317,6 +90929,10 @@
         },
         {
           "key": "hoodie.avro.schema",
+          "sharedMethods": 1
+        },
+        {
+          "key": "hoodie.base.path",
           "sharedMethods": 1
         },
         {
@@ -90606,7 +91222,16 @@
       "shortCircuits": [],
       "engineDefaults": null,
       "callSiteDefaults": [],
-      "flinkOptions": [],
+      "flinkOptions": [
+        {
+          "flinkOption": "write.parquet.max.file.size",
+          "flinkDefault": "120",
+          "valueTransformed": true,
+          "how": "builder:parquetMaxFileSize",
+          "at": "FlinkWriteClients (hudi-flink-datasource/hudi-flink/src/main/java/org/apache/hudi/util/FlinkWriteClients.java:232)"
+        }
+      ],
+      "flinkOptionNote": "On Flink this key is driven by a Flink option. 'fallbackKey': the job reads the Flink option and consults this key only when the Flink option is unset, so flinkDefault is the effective default. 'builder:<method>': the Flink write client copies the Flink option into this key, so with this key unset a Flink writer gets flinkDefault (valueTransformed: true means a unit conversion or other expression is applied at the cited line). An explicit hoodie.* key passed through the Flink table options is applied after the builder in FlinkWriteClients and wins; check the cited line for other builders.",
       "readSites": [
         {
           "class": "HoodieInlineLogAppendHandle",
@@ -91009,6 +91634,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.read.blob.inline.mode",
           "sharedMethods": 1
         },
@@ -91072,7 +91701,16 @@
       "shortCircuits": [],
       "engineDefaults": null,
       "callSiteDefaults": [],
-      "flinkOptions": [],
+      "flinkOptions": [
+        {
+          "flinkOption": "write.parquet.page.size",
+          "flinkDefault": "1",
+          "valueTransformed": true,
+          "how": "builder:parquetPageSize",
+          "at": "FlinkWriteClients (hudi-flink-datasource/hudi-flink/src/main/java/org/apache/hudi/util/FlinkWriteClients.java:231)"
+        }
+      ],
+      "flinkOptionNote": "On Flink this key is driven by a Flink option. 'fallbackKey': the job reads the Flink option and consults this key only when the Flink option is unset, so flinkDefault is the effective default. 'builder:<method>': the Flink write client copies the Flink option into this key, so with this key unset a Flink writer gets flinkDefault (valueTransformed: true means a unit conversion or other expression is applied at the cited line). An explicit hoodie.* key passed through the Flink table options is applied after the builder in FlinkWriteClients and wins; check the cited line for other builders.",
       "readSites": [
         {
           "class": "HoodieInternalRowFileWriterFactory",
@@ -92828,6 +93466,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 9
+        },
+        {
           "key": "hoodie.storage.class",
           "sharedMethods": 7
         },
@@ -92921,10 +93563,6 @@
         },
         {
           "key": "hoodie.bootstrap.index.type",
-          "sharedMethods": 2
-        },
-        {
-          "key": "hoodie.datasource.hive_sync.partition_extractor_class",
           "sharedMethods": 2
         }
       ],
@@ -93145,6 +93783,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.partition.ttl.strategy.class",
           "sharedMethods": 1
         },
@@ -93360,6 +94002,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
         {
           "key": "hoodie.partition.ttl.management.strategy.type",
           "sharedMethods": 1
@@ -93629,6 +94275,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
         {
           "key": "hoodie.clean.commits.retained",
           "sharedMethods": 1
@@ -94931,6 +95581,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 3
+        },
+        {
           "key": "hoodie.clean.commits.retained",
           "sharedMethods": 3
         },
@@ -95024,10 +95678,6 @@
         },
         {
           "key": "hoodie.hfile.block.cache.enabled",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.hfile.block.cache.size",
           "sharedMethods": 1
         }
       ],
@@ -95212,6 +95862,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
         {
           "key": "hoodie.parquet.outputtimestamptype",
           "sharedMethods": 1
@@ -96824,6 +97478,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -96914,10 +97572,6 @@
         {
           "key": "hoodie.metadata.compact.max.delta.commits",
           "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.compact.max.delta.seconds",
-          "sharedMethods": 1
         }
       ],
       "gatingConditions": [],
@@ -96998,6 +97652,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
         {
           "key": "hoodie.rollback.using.markers",
           "sharedMethods": 1
@@ -97328,6 +97986,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
+        {
           "key": "hoodie.consistency.check.enabled",
           "sharedMethods": 1
         },
@@ -97603,6 +98265,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 6
+        },
         {
           "key": "hoodie.storage.class",
           "sharedMethods": 2
@@ -98008,6 +98674,10 @@
           "sharedMethods": 1
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.bucket.index.num.buckets",
           "sharedMethods": 1
         },
@@ -98061,10 +98731,6 @@
         },
         {
           "key": "hoodie.datasource.write.secondarykey.column",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.datasource.write.slash.separated.date.partitioning",
           "sharedMethods": 1
         }
       ],
@@ -100246,6 +100912,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 116
+        },
+        {
           "key": "hoodie.io.factory.class",
           "sharedMethods": 29
         },
@@ -100314,6 +100984,10 @@
           "sharedMethods": 3
         },
         {
+          "key": "hoodie.metadata.enable",
+          "sharedMethods": 3
+        },
+        {
           "key": "hoodie.metadata.max.init.parallelism",
           "sharedMethods": 3
         },
@@ -100335,14 +101009,6 @@
         },
         {
           "key": "hoodie.bucket.index.partition.rule.type",
-          "sharedMethods": 2
-        },
-        {
-          "key": "hoodie.clean.failed.writes.policy",
-          "sharedMethods": 2
-        },
-        {
-          "key": "hoodie.consistency.check.enabled",
           "sharedMethods": 2
         }
       ],
@@ -103161,7 +103827,12 @@
           "gates": []
         }
       ],
-      "coConfigs": [],
+      "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        }
+      ],
       "gatingConditions": [],
       "gatedBy": [],
       "noExternalConsumer": false,
@@ -117644,11 +118315,11 @@
           "sharedMethods": 2
         },
         {
-          "key": "hoodie.bootstrap.base.path",
+          "key": "hoodie.base.path",
           "sharedMethods": 2
         },
         {
-          "key": "hoodie.bootstrap.index.enable",
+          "key": "hoodie.bootstrap.base.path",
           "sharedMethods": 2
         }
       ],
@@ -117738,6 +118409,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
         {
           "key": "hoodie.database.name",
           "sharedMethods": 1
@@ -118091,7 +118766,7 @@
           "sharedMethods": 2
         },
         {
-          "key": "hoodie.bootstrap.base.path",
+          "key": "hoodie.base.path",
           "sharedMethods": 2
         }
       ],
@@ -118619,6 +119294,10 @@
           "sharedMethods": 20
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 17
+        },
+        {
           "key": "hoodie.write.table.version",
           "sharedMethods": 8
         },
@@ -118708,10 +119387,6 @@
         },
         {
           "key": "hoodie.datasource.partition_extractor_class",
-          "sharedMethods": 3
-        },
-        {
-          "key": "hoodie.datasource.write.table.type",
           "sharedMethods": 3
         }
       ],
@@ -119179,6 +119854,10 @@
         {
           "key": "hoodie.table.version",
           "sharedMethods": 2
+        },
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
         },
         {
           "key": "hoodie.compaction.payload.class",
@@ -120382,6 +121061,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 5
+        },
+        {
           "key": "hoodie.table.metadata.partitions.inflight",
           "sharedMethods": 5
         },
@@ -120476,10 +121159,6 @@
         {
           "key": "hoodie.table.index.defs.path",
           "sharedMethods": 2
-        },
-        {
-          "key": "hoodie.table.keygenerator.class",
-          "sharedMethods": 2
         }
       ],
       "gatingConditions": [
@@ -120557,6 +121236,11 @@
           "key": "hoodie.metadata.enable",
           "viaAccessor": "isMetadataTableEnabled",
           "at": "HoodieTable.shouldExecuteMetadataTableDeletion (hudi-client/hudi-client-common/src/main/java/org/apache/hudi/table/HoodieTable.java:1218)"
+        },
+        {
+          "key": "hoodie.base.path",
+          "viaAccessor": "getBasePath",
+          "at": "ThreeToFourUpgradeHandler.upgrade (hudi-client/hudi-client-common/src/main/java/org/apache/hudi/table/upgrade/ThreeToFourUpgradeHandler.java:57)"
         }
       ],
       "noExternalConsumer": false,
@@ -120729,6 +121413,10 @@
           "sharedMethods": 5
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 3
+        },
+        {
           "key": "hoodie.table.timeline.timezone",
           "sharedMethods": 3
         },
@@ -120818,10 +121506,6 @@
         },
         {
           "key": "hoodie.table.keygenerator.class",
-          "sharedMethods": 2
-        },
-        {
-          "key": "hoodie.table.keygenerator.type",
           "sharedMethods": 2
         }
       ],
@@ -121450,6 +122134,10 @@
           "sharedMethods": 8
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 7
+        },
+        {
           "key": "hoodie.datasource.write.keygenerator.class",
           "sharedMethods": 7
         },
@@ -121531,10 +122219,6 @@
         },
         {
           "key": "hoodie.bootstrap.base.path",
-          "sharedMethods": 4
-        },
-        {
-          "key": "hoodie.datasource.write.drop.partition.columns",
           "sharedMethods": 4
         }
       ],
@@ -122553,6 +123237,10 @@
           "sharedMethods": 6
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 5
+        },
+        {
           "key": "hoodie.table.partition_extractor_class",
           "sharedMethods": 5
         },
@@ -122626,10 +123314,6 @@
         },
         {
           "key": "hoodie.database.name",
-          "sharedMethods": 2
-        },
-        {
-          "key": "hoodie.datasource.read.extract.partition.values.from.path",
           "sharedMethods": 2
         }
       ],
@@ -123465,6 +124149,10 @@
           "sharedMethods": 5
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 4
+        },
+        {
           "key": "hoodie.datasource.write.slash.separated.date.partitioning",
           "sharedMethods": 4
         },
@@ -123518,10 +124206,6 @@
         },
         {
           "key": "hoodie.table.create.schema",
-          "sharedMethods": 3
-        },
-        {
-          "key": "hoodie.table.keygenerator.type",
           "sharedMethods": 3
         }
       ],
@@ -123862,6 +124546,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -123955,10 +124643,6 @@
         },
         {
           "key": "hoodie.metadata.compact.max.delta.seconds",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.compact.trigger.strategy",
           "sharedMethods": 1
         }
       ],
@@ -124717,6 +125401,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -124810,10 +125498,6 @@
         },
         {
           "key": "hoodie.metadata.compact.max.delta.seconds",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.compact.trigger.strategy",
           "sharedMethods": 1
         }
       ],
@@ -125001,6 +125685,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
         {
           "key": "hoodie.filesystem.view.remote.response.charset",
           "sharedMethods": 1
@@ -125252,6 +125940,10 @@
         },
         {
           "key": "hoodie.allow.empty.commit",
+          "sharedMethods": 1
+        },
+        {
+          "key": "hoodie.base.path",
           "sharedMethods": 1
         },
         {
@@ -125518,6 +126210,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
         {
           "key": "hoodie.clustering.execution.strategy.class",
           "sharedMethods": 1
@@ -126555,6 +127251,10 @@
           "sharedMethods": 4
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 3
+        },
+        {
           "key": "hoodie.bootstrap.base.path",
           "sharedMethods": 3
         },
@@ -126624,10 +127324,6 @@
         },
         {
           "key": "hoodie.bootstrap.index.enable",
-          "sharedMethods": 2
-        },
-        {
-          "key": "hoodie.compact.inline",
           "sharedMethods": 2
         }
       ],
@@ -126932,6 +127628,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 13
+        },
+        {
           "key": "hoodie.table.recordkey.fields",
           "sharedMethods": 6
         },
@@ -127025,10 +127725,6 @@
         },
         {
           "key": "hoodie.bootstrap.index.type",
-          "sharedMethods": 2
-        },
-        {
-          "key": "hoodie.compact.inline",
           "sharedMethods": 2
         }
       ],
@@ -127983,6 +128679,10 @@
           "sharedMethods": 8
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 6
+        },
+        {
           "key": "hoodie.table.format",
           "sharedMethods": 6
         },
@@ -128068,10 +128768,6 @@
         },
         {
           "key": "hoodie.rollback.using.markers",
-          "sharedMethods": 2
-        },
-        {
-          "key": "hoodie.table.base.file.format",
           "sharedMethods": 2
         }
       ],
@@ -128545,6 +129241,10 @@
           "sharedMethods": 8
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 6
+        },
+        {
           "key": "hoodie.table.format",
           "sharedMethods": 6
         },
@@ -128626,10 +129326,6 @@
         },
         {
           "key": "hoodie.record.merge.strategy.id",
-          "sharedMethods": 2
-        },
-        {
-          "key": "hoodie.table.base.file.format",
           "sharedMethods": 2
         }
       ],
@@ -129634,6 +130330,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.client.heartbeat.interval_in_ms",
           "sharedMethods": 1
         },
@@ -129774,6 +130474,10 @@
         {
           "key": "hoodie.write.table.version",
           "sharedMethods": 3
+        },
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
         },
         {
           "key": "hoodie.table.version",
@@ -130258,6 +130962,10 @@
       "coConfigs": [
         {
           "key": "hoodie.allow.empty.commit",
+          "sharedMethods": 1
+        },
+        {
+          "key": "hoodie.base.path",
           "sharedMethods": 1
         },
         {
@@ -131214,6 +131922,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
         {
           "key": "hoodie.clustering.async.enabled",
           "sharedMethods": 1
@@ -132438,6 +133150,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.datasource.write.keygenerator.consistent.logical.timestamp.enabled",
           "sharedMethods": 1
         },
@@ -132560,6 +133276,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
         {
           "key": "hoodie.write.complex.keygen.new.encoding",
           "sharedMethods": 1
@@ -133145,6 +133865,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.bucket.index.remote.partitioner.enable",
           "sharedMethods": 1
         },
@@ -133388,6 +134112,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.commits.retained",
           "sharedMethods": 1
         },
@@ -133469,10 +134197,6 @@
         },
         {
           "key": "hoodie.timeline.layout.version",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.write.concurrency.async.conflict.detector.initial_delay_ms",
           "sharedMethods": 1
         }
       ],
@@ -133957,6 +134681,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 3
+        },
+        {
           "key": "hoodie.bucket.index.hash.field",
           "sharedMethods": 3
         },
@@ -134050,10 +134778,6 @@
         },
         {
           "key": "hoodie.metadata.record.level.index.defer.init",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.partition.ttl.strategy.stats.max.parallelism",
           "sharedMethods": 1
         }
       ],
@@ -134368,6 +135092,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
         {
           "key": "hoodie.clean.incremental.enabled",
           "sharedMethods": 1
@@ -135035,6 +135763,10 @@
           "sharedMethods": 2
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.failed.writes.policy",
           "sharedMethods": 1
         },
@@ -135100,10 +135832,6 @@
         },
         {
           "key": "hoodie.write.set.null.for.missing.columns",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.write.timestamp.logical.type.overrides",
           "sharedMethods": 1
         }
       ],
@@ -137519,6 +138247,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 4
+        },
+        {
           "key": "hoodie.auto.adjust.lock.configs",
           "sharedMethods": 2
         },
@@ -137612,10 +138344,6 @@
         },
         {
           "key": "hoodie.embed.timeline.server",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.file.listing.parallelism",
           "sharedMethods": 1
         }
       ],
@@ -137753,7 +138481,7 @@
           "sharedMethods": 2
         },
         {
-          "key": "hoodie.bootstrap.base.path",
+          "key": "hoodie.base.path",
           "sharedMethods": 1
         }
       ],
@@ -137858,7 +138586,7 @@
           "sharedMethods": 2
         },
         {
-          "key": "hoodie.bootstrap.base.path",
+          "key": "hoodie.base.path",
           "sharedMethods": 1
         }
       ],
@@ -138946,6 +139674,10 @@
           "sharedMethods": 18
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 6
+        },
+        {
           "key": "hoodie.bucket.index.remote.partitioner.enable",
           "sharedMethods": 2
         },
@@ -139035,10 +139767,6 @@
         },
         {
           "key": "hoodie.markers.timeline_server_based.batch.num_threads",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.enable",
           "sharedMethods": 1
         }
       ],
@@ -139516,6 +140244,10 @@
         },
         {
           "key": "hoodie.avro.schema",
+          "sharedMethods": 1
+        },
+        {
+          "key": "hoodie.base.path",
           "sharedMethods": 1
         },
         {
@@ -140138,6 +140870,10 @@
           "sharedMethods": 4
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 3
+        },
+        {
           "key": "hoodie.datasource.hive_sync.database",
           "sharedMethods": 3
         },
@@ -140171,10 +140907,6 @@
         },
         {
           "key": "hoodie.datasource.write.drop.partition.columns",
-          "sharedMethods": 3
-        },
-        {
-          "key": "hoodie.datasource.write.recordkey.field",
           "sharedMethods": 3
         }
       ],
@@ -140729,6 +141461,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
+        },
+        {
           "key": "hoodie.markers.delete.parallelism",
           "sharedMethods": 2
         },
@@ -140845,6 +141581,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
         {
           "key": "hoodie.clean.commits.retained",
           "sharedMethods": 1
@@ -141128,6 +141868,10 @@
           "sharedMethods": 3
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 3
+        },
+        {
           "key": "hoodie.datasource.write.table.type",
           "sharedMethods": 2
         },
@@ -141365,6 +142109,10 @@
           "sharedMethods": 1
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clustering.async.enabled",
           "sharedMethods": 1
         },
@@ -141430,10 +142178,6 @@
         },
         {
           "key": "hoodie.datasource.hive_sync.password",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.datasource.hive_sync.serde_properties",
           "sharedMethods": 1
         }
       ],
@@ -141568,6 +142312,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 5
+        },
         {
           "key": "hoodie.avro.schema",
           "sharedMethods": 1
@@ -141839,6 +142587,10 @@
       ],
       "coConfigs": [
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 9
+        },
+        {
           "key": "hoodie.datasource.write.partitionpath.field",
           "sharedMethods": 9
         },
@@ -141932,10 +142684,6 @@
         },
         {
           "key": "hoodie.allow.operation.metadata.field",
-          "sharedMethods": 2
-        },
-        {
-          "key": "hoodie.clean.failed.writes.policy",
           "sharedMethods": 2
         }
       ],
@@ -142073,6 +142821,10 @@
         }
       ],
       "coConfigs": [
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
         {
           "key": "hoodie.errortable.source.rdd.persist",
           "sharedMethods": 1
@@ -142217,6 +142969,10 @@
         {
           "key": "hoodie.write.set.null.for.missing.columns",
           "sharedMethods": 3
+        },
+        {
+          "key": "hoodie.base.path",
+          "sharedMethods": 2
         },
         {
           "key": "hoodie.allow.operation.metadata.field",
@@ -142487,6 +143243,10 @@
           "sharedMethods": 1
         },
         {
+          "key": "hoodie.base.path",
+          "sharedMethods": 1
+        },
+        {
           "key": "hoodie.clean.automatic",
           "sharedMethods": 1
         },
@@ -142572,10 +143332,6 @@
         },
         {
           "key": "hoodie.metadata.bloom.filter.num.entries",
-          "sharedMethods": 1
-        },
-        {
-          "key": "hoodie.metadata.bloom.filter.type",
           "sharedMethods": 1
         }
       ],

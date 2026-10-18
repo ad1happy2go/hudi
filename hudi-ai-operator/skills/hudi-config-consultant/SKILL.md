@@ -69,6 +69,22 @@ close every substantive answer with them:
 This is not boilerplate. Config defaults and gating conditions move between releases, and a
 confident answer against the wrong version is worse than no answer.
 
+## Step 0b — know where you can read source, once
+
+Much of this skill says "open the cited line". Decide up front how you will do that, then stop
+looking:
+
+1. **The current directory, or a directory the user named, is a Hudi checkout** (it has
+   `hudi-client/` and `pom.xml`): read the cited `file:line` there.
+2. **Otherwise, if you can fetch URLs:** fetch the file at the catalog's commit,
+   `https://raw.githubusercontent.com/apache/hudi/<generatedFrom>/<file>`, and read around the line.
+3. **Otherwise:** answer from the catalog alone and say once that the code-level claims are the
+   catalog's, not checked against source.
+
+**Never search the filesystem for a Hudi checkout** (`find /`, `find ~`, `locate`). It is slow, it
+times out, and it does not change the answer — a user who installed this skill without a checkout
+does not have one hidden somewhere.
+
 ## Step 1 — find the config, or say you could not
 
 Exact key match first. If there is no exact match:

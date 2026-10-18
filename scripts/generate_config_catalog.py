@@ -1200,8 +1200,48 @@ def find_method_bodies(masked, original):
         yield match.group("name"), brace_index, end, line_of(original, match.start())
 
 
-def resolve_constant(expr, owner_class, constant_index):
-    """Map a (possibly qualified) constant reference to a config key."""
+STATIC_IMPORT_RE = re.compile(
+    r"^\s*import\s+static\s+[\w.]*?\.(?P<cls>[A-Z][\w$]*)\.(?P<member>[A-Z][A-Z0-9_]*|\*)\s*;", re.M)
+
+
+def static_imports(original):
+    """``import static ...HoodieCommonConfig.BASE_PATH;`` -> {"BASE_PATH": "HoodieCommonConfig"}.
+
+    Wildcard imports are returned under "*" as a list of classes.
+    """
+    result = {"*": []}
+    for match in STATIC_IMPORT_RE.finditer(original):
+        if match.group("member") == "*":
+            result["*"].append(match.group("cls"))
+        else:
+            result[match.group("member")] = match.group("cls")
+    return result
+
+
+_BARE_COUNTS = {}
+
+
+def _bare_is_ambiguous(const, constant_index):
+    counts = _BARE_COUNTS.get(id(constant_index))
+    if counts is None or counts[0] != len(constant_index):
+        tally = defaultdict(set)
+        for (qualifier, name), key in constant_index.items():
+            if qualifier is not None:
+                tally[name].add(key)
+        counts = (len(constant_index), tally)
+        _BARE_COUNTS[id(constant_index)] = counts
+    return len(counts[1].get(const, ())) > 1
+
+
+def resolve_constant(expr, owner_class, constant_index, imports=None):
+    """Map a (possibly qualified) constant reference to a config key.
+
+    ``imports`` (from :func:`static_imports`) qualifies a bare name the file
+    imports statically. Without it, a bare name declared by several classes is
+    refused rather than resolved to whichever class registered it last:
+    HoodieTimeGeneratorConfig's statically imported BASE_PATH is
+    hoodie.base.path, not hoodie.bootstrap.base.path.
+    """
     # `props.getBoolean(ERROR_TABLE_ENABLED.key(), ...)` -- a very common shape,
     # especially in hudi-utilities where configs are read straight off a
     # TypedProperties rather than through a HoodieWriteConfig getter. Without
@@ -1225,6 +1265,17 @@ def resolve_constant(expr, owner_class, constant_index):
         resolved = constant_index.get((owner_class, const))
         if resolved:
             return resolved
+        if imports:
+            if const in imports:
+                resolved = constant_index.get((imports[const], const))
+                if resolved:
+                    return resolved
+            for cls in imports.get("*", ()):
+                resolved = constant_index.get((cls, const))
+                if resolved:
+                    return resolved
+        if imports is not None and _bare_is_ambiguous(const, constant_index):
+            return None
     return constant_index.get((None, const))
 
 
@@ -1303,6 +1354,7 @@ def collect_accessors(repo_root, constant_index):
         if class_match:
             owner_class = class_match.group(1)
 
+        file_imports = static_imports(original)
         for name, body_start, body_end, sig_line in find_method_bodies(masked, original):
             body = masked[body_start:body_end]
             if len(body) > 600:
@@ -1310,7 +1362,7 @@ def collect_accessors(repo_root, constant_index):
             keys = set()
             for pattern in (GETTER_CALL_RE, ALT_KEYS_CALL_RE):
                 for call in pattern.finditer(body):
-                    key = resolve_constant(call.group("arg"), owner_class, constant_index)
+                    key = resolve_constant(call.group("arg"), owner_class, constant_index, file_imports)
                     if key:
                         keys.add(key)
             if len(keys) == 1 and name not in GENERIC_METHOD_NAMES:
@@ -2157,9 +2209,10 @@ def collect_call_site_defaults(repo_root, constant_index):
         class_match = (SCALA_CLASS_DECL_RE if is_scala else CLASS_DECL_RE).search(text)
         owner_class = class_match.group(1) if class_match else None
         relative = os.path.relpath(file_path, repo_root)
+        file_imports = static_imports(original)
         for match in CALL_SITE_DEFAULT_RE.finditer(text):
             const = re.sub(r"\s+", "", match.group("const"))
-            key = resolve_constant(const, owner_class, constant_index)
+            key = resolve_constant(const, owner_class, constant_index, file_imports)
             if not key:
                 continue
             found[key].append(OrderedDict([
@@ -2259,9 +2312,14 @@ def collect_builder_setters(repo_root, constant_index):
         masked = strip_comments_and_strings(original)
         class_match = CLASS_DECL_RE.search(masked)
         owner_class = class_match.group(1) if class_match else None
+        file_imports = static_imports(original)
         for name, body_start, body_end, _ in find_method_bodies(masked, original):
-            if not name.startswith("with") and not name.startswith("enable") \
-                    and not name.endswith("With"):
+            if name in GENERIC_METHOD_NAMES or name.startswith(("get", "is", "should")):
+                continue
+            # Builder setters return the builder; a plain method that happens to
+            # call setValue (build(), setDefaults()) is not one.
+            sig_line_start = masked.rfind("\n", 0, masked.rfind(name, 0, body_start)) + 1
+            if "Builder" not in masked[sig_line_start:body_start]:
                 continue
             sig_open = masked.rfind("(", 0, body_start)
             sig_close = masked.rfind(")", 0, body_start)
@@ -2271,7 +2329,7 @@ def collect_builder_setters(repo_root, constant_index):
             mapping = []
             for setter in BUILDER_SETTER_RE.finditer(body):
                 const = re.sub(r"\s+", "", setter.group("const") or setter.group("const2"))
-                key = resolve_constant(const, owner_class, constant_index)
+                key = resolve_constant(const, owner_class, constant_index, file_imports)
                 if not key:
                     continue
                 rest = body[setter.end():body.find(";", setter.end())]
@@ -2301,9 +2359,22 @@ def builder_receiver(masked, index):
     closed by a ``.build()`` yet. Good enough to tell HoodieCompactionConfig's
     withMaxNumDeltaCommitsBeforeCompaction from HoodieMetadataConfig's.
     """
-    window = masked[max(0, index - 4000):index]
+    window = masked[max(0, index - 6000):index]
     for match in reversed(list(NEW_BUILDER_RE.finditer(window))):
-        if not re.search(r"\.\s*build\s*\(\s*\)", window[match.end():]):
+        # Same chain means the text from `newBuilder(` to the call is balanced
+        # and never closes more than it opened: a builder nested in an earlier
+        # argument closes that argument before the call is reached.
+        depth = 0
+        ok = True
+        for ch in window[match.end() - 1:]:
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth < 0:
+                    ok = False
+                    break
+        if ok and depth == 0:
             return match.group(1)
     return None
 
@@ -2351,8 +2422,11 @@ def collect_flink_mappings(repo_root, constant_index):
         owner_class = class_match.group(1) if class_match else "?"
         for call in re.finditer(r"\.\s*([a-z][A-Za-z0-9]*)\s*\(", masked):
             receiver = builder_receiver(masked, call.start())
-            mapping = setters.get((receiver, call.group(1))) if receiver else None
-            mapping = mapping or setters.get(call.group(1))
+            # A known receiver is authoritative: falling back to the bare name
+            # would file HoodieTimeGeneratorConfig.withPath under
+            # HoodieBootstrapConfig's withPath.
+            mapping = setters.get((receiver, call.group(1))) if receiver \
+                else setters.get(call.group(1))
             if not mapping:
                 continue
             args_text, _ = extract_call_args(masked, call.end() - 1)
