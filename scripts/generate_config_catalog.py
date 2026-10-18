@@ -2451,6 +2451,162 @@ def collect_flink_mappings(repo_root, constant_index):
 
 
 # --------------------------------------------------------------------------
+# Pass 6: implementations that ship for class-valued configs
+# --------------------------------------------------------------------------
+
+CLASS_VALUED_KEY_RE = re.compile(r"\.(?:class|classes|provider|impl|impls)$|\.class\.name$")
+JAVA_TYPE_DECL_RE = re.compile(
+    r"\b(?P<mods>(?:(?:public|protected|private|static|final|abstract|sealed|non-sealed)\s+)*)"
+    r"(?P<kind>class|interface|enum|record)\s+(?P<name>[A-Z][A-Za-z0-9_$]*)(?P<rest>[^{;]*)\{")
+SCALA_TYPE_DECL_RE = re.compile(
+    r"\b(?P<mods>(?:(?:abstract|final|sealed|case|private|protected)\s+)*)"
+    r"(?P<kind>class|trait|object)\s+(?P<name>[A-Z][A-Za-z0-9_$]*)(?P<rest>[^{\n]*)")
+PACKAGE_RE = re.compile(r"^\s*package\s+([\w.]+)", re.M)
+GENERIC_SUPERTYPES = frozenset((
+    "Serializable", "Closeable", "AutoCloseable", "Object", "Comparable", "Cloneable",
+    "Iterable", "Iterator", "Function", "Supplier", "Runnable", "Callable", "HoodieConfig",
+    "Configurable", "Product", "Logging", "SparkAdapterSupport", "Enum",
+))
+CLASS_DOC_RE = re.compile(
+    r"(?:subclass(?:es)? of|implementations? of|implement(?:s|ing)?|extend(?:s|ing)?|instances? of|"
+    r"type of|class of)\s+`?(?:the\s+)?(?P<pkg>(?:[a-z][\w]*\.)*)(?P<name>[A-Z][A-Za-z0-9_$]*)")
+# Implementations in these modules are samples and test harnesses, not something
+# to recommend to an operator.
+SAMPLE_MODULES = frozenset(("hudi-examples", "hudi-integ-test", "hudi-cli"))
+
+
+def _strip_generics(text):
+    previous = None
+    while previous != text:
+        previous = text
+        text = re.sub(r"<[^<>]*>", "", text)
+        text = re.sub(r"\[[^\[\]]*\]", "", text)
+    return text
+
+
+def collect_type_hierarchy(repo_root):
+    """name -> {fqn, parents, concrete} for every top-level and nested type."""
+    types = {}
+    for file_path in walk_source_files(repo_root, (".java", ".scala")):
+        if SOURCE_DIR_MARKER not in file_path:
+            continue
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="replace") as handle:
+                original = handle.read()
+        except OSError:
+            continue
+        is_scala = file_path.endswith(".scala")
+        masked = strip_comments_and_strings(original, scala=is_scala)
+        package = PACKAGE_RE.search(masked)
+        package = package.group(1) if package else ""
+        pattern = SCALA_TYPE_DECL_RE if is_scala else JAVA_TYPE_DECL_RE
+        for match in pattern.finditer(masked):
+            name, kind, mods = match.group("name"), match.group("kind"), match.group("mods")
+            rest = _strip_generics(match.group("rest"))
+            rest = re.sub(r"\([^()]*\)", "", rest)
+            parents = []
+            if is_scala:
+                ext = re.search(r"\bextends\s+(.*)", rest)
+                if ext:
+                    parents = [p.strip().split(".")[-1] for p in
+                               re.split(r"\bwith\b", ext.group(1)) if p.strip()]
+            else:
+                for clause in ("extends", "implements"):
+                    found = re.search(r"\b%s\s+([\w.$,\s]+?)(?:\bimplements\b|\bpermits\b|$)" % clause, rest)
+                    if found:
+                        parents += [p.strip().split(".")[-1] for p in found.group(1).split(",") if p.strip()]
+            parents = [re.sub(r"\W.*$", "", p) for p in parents if p]
+            concrete = kind in ("class", "record") and "abstract" not in mods
+            if name in types:
+                # Same simple name in two packages: keep both parents, mark ambiguous.
+                types[name]["parents"] = sorted(set(types[name]["parents"]) | set(parents))
+                types[name]["ambiguous"] = True
+                types[name]["fqns"].append("%s.%s" % (package, name) if package else name)
+                continue
+            types[name] = {
+                "fqn": "%s.%s" % (package, name) if package else name,
+                "parents": parents,
+                "concrete": concrete,
+                "kind": kind,
+                "module": module_of(os.path.relpath(file_path, repo_root)),
+                "fqns": ["%s.%s" % (package, name) if package else name],
+            }
+    return types
+
+
+def _descendants(base, children):
+    seen, stack = set(), [base]
+    while stack:
+        for child in children.get(stack.pop(), ()):
+            if child not in seen:
+                seen.add(child)
+                stack.append(child)
+    return seen
+
+
+def collect_known_implementations(entries, types):
+    """key -> {baseType, baseTypeFrom, classes} for class-valued configs."""
+    children = defaultdict(set)
+    for name, info in types.items():
+        for parent in info["parents"]:
+            children[parent].add(name)
+    result = {}
+    for entry in entries:
+        key = entry.get("key") or ""
+        default = str(entry.get("defaultValue") or "")
+        default_class = None
+        m = re.search(r"(?:classOf\[)?([A-Z][A-Za-z0-9_$]*)(?:\])?(?:\.class)?\s*\.\s*getName", default) \
+            or re.fullmatch(r"(?:[a-z][\w]*\.)+([A-Z][A-Za-z0-9_$]*)", default.strip())
+        if m:
+            default_class = m.group(1)
+        if not (CLASS_VALUED_KEY_RE.search(key) or default_class):
+            continue
+        if entry.get("enumDocumentation") or entry.get("validValues"):
+            continue
+        candidates = []
+        doc = entry.get("documentation") or ""
+        doc_fqn = {}
+        for doc_match in CLASS_DOC_RE.finditer(doc):
+            candidates.append((doc_match.group("name"), "documentation"))
+            if doc_match.group("pkg"):
+                doc_fqn[doc_match.group("name")] = doc_match.group("pkg") + doc_match.group("name")
+        if default_class and default_class in types:
+            # Walk up from the default; the first ancestor with several concrete
+            # descendants is the extension point.
+            frontier = list(types[default_class]["parents"])
+            seen = set()
+            while frontier:
+                parent = frontier.pop(0)
+                if parent in seen:
+                    continue
+                seen.add(parent)
+                candidates.append((parent, "defaultValue ancestry"))
+                if parent in types:
+                    frontier += types[parent]["parents"]
+        for base, source in candidates:
+            if base in GENERIC_SUPERTYPES or base not in types:
+                continue
+            concrete = sorted(types[c]["fqn"] for c in _descendants(base, children)
+                              if types[c]["concrete"] and types[c]["module"] not in SAMPLE_MODULES)
+            if len(concrete) < 2 and not (source == "documentation" and concrete):
+                continue
+            base_fqn = doc_fqn.get(base) or types[base]["fqn"]
+            record = OrderedDict([
+                ("baseType", base_fqn),
+                ("baseTypeFrom", source),
+                ("count", len(concrete)),
+                ("classes", concrete[:30]),
+            ])
+            if types[base].get("ambiguous"):
+                # Hierarchy is by simple name; two types share this one, so the
+                # list may mix implementations of both.
+                record["baseTypeAmbiguous"] = sorted(types[base]["fqns"])
+            result[key] = record
+            break
+    return result
+
+
+# --------------------------------------------------------------------------
 # Assembly and output
 # --------------------------------------------------------------------------
 
@@ -2502,6 +2658,8 @@ def build_catalog(repo_root, verbose=False):
         print("  configs with engine-specific defaults: %d" % len(engine_defaults),
               file=sys.stderr)
 
+    known_implementations = collect_known_implementations(
+        entries, collect_type_hierarchy(repo_root))
     call_site_defaults = collect_call_site_defaults(repo_root, constant_index)
     flink_mappings, _ = collect_flink_mappings(repo_root, constant_index)
     if verbose:
@@ -2590,6 +2748,11 @@ def build_catalog(repo_root, verbose=False):
                 "default; declaredValue is not.")
         else:
             entry["engineDefaults"] = None
+
+        # The classes a class-valued config can name, as shipped. Recovered from
+        # extends/implements clauses, so a class loaded by reflection from
+        # outside this tree is never listed.
+        entry["knownImplementations"] = known_implementations.get(key)
 
         # A literal fallback at the read beats the declaration on that code path.
         # Only the disagreeing ones are worth a reader's attention.
@@ -2719,6 +2882,7 @@ def build_catalog(repo_root, verbose=False):
         entry["shortCircuits"] = []
         entry["callSiteDefaults"] = []
         entry["flinkOptions"] = []
+        entry["knownImplementations"] = None
         configs.append(entry)
 
     stats = {
@@ -2736,6 +2900,7 @@ def build_catalog(repo_root, verbose=False):
         "configsWithEngineDefaults": len(engine_defaults),
         "configsWithCallSiteDefaults": sum(1 for c in configs if c.get("callSiteDefaults")),
         "configsWithFlinkOptions": sum(1 for c in configs if c.get("flinkOptions")),
+        "configsWithKnownImplementations": sum(1 for c in configs if c.get("knownImplementations")),
         "configsWithConfigDependentDefaults": sum(
             1 for record in engine_defaults.values()
             if record.get("defaultIsConfigDependent")),
@@ -2910,6 +3075,8 @@ def main(argv=None):
     print("Call-site defaults: %d configs read with a fallback that differs from the declared default"
           % stats["configsWithCallSiteDefaults"])
     print("Flink options     : %d configs driven by a Flink option on Flink" % stats["configsWithFlinkOptions"])
+    print("Implementations   : %d class-valued configs with shipped implementations listed"
+          % stats["configsWithKnownImplementations"])
     print("Aliases resolved  : %d (unresolved %d)"
           % (stats["aliasesResolved"], stats["aliasesUnresolved"]))
     print("Accessors         : %d" % stats["accessorsResolved"])

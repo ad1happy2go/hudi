@@ -93,6 +93,12 @@ Exact key match first. If there is no exact match:
 2. Try substring and token matching on keys and on `documentation`.
 3. Report the closest matches and say plainly that the exact key is not in the catalog.
 
+**For a config that takes a class name, `knownImplementations` is the list of valid values that
+ship.** Give the fully qualified names from it — `org.apache.hudi.client.transaction.lock.StorageBasedLockProvider`,
+not a name reconstructed from a file path — and say which module a class lives in when the user may
+not have it on the classpath (the DynamoDB providers are in `hudi-aws`). A user's own class works
+too; the list is what ships, not a closed set.
+
 **Never invent a key, a default or a valid value.** If the catalog does not have it, the answer is
 "that key is not in this catalog" plus the nearest candidates. The inverse is worth a sentence too:
 when a key looks malformed but matches the catalog exactly — `hoodie.archive.block.on.latest.clean.ectr`

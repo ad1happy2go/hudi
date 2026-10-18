@@ -32,7 +32,7 @@ limitations under the License.
 `schemaVersion` 2 adds `engineDefaults` / `conditionalEngineDefaults`, the `language` field, and
 the `readContextResolved` honesty flag for Scala-declared configs. `schemaVersion` 3 adds
 `shortCircuits` / `shortCircuitHeuristic`, `gatedBy` and `noExternalConsumer`. `schemaVersion` 4
-adds `callSiteDefaults` and `flinkOptions`.
+adds `callSiteDefaults`, `flinkOptions` and `knownImplementations`.
 
 `configs` is sorted by `key`, so regeneration produces a readable diff. Read `hudiVersion` and
 `generatedFrom` on every query; they belong in your answer.
@@ -117,6 +117,7 @@ inferred, but each applies only on the code path it names.
 | `callSiteDefaultNote` | The standing caveat, present when `callSiteDefaults` is non-empty. |
 | `flinkOptions` | `{flinkOption, flinkDefault, how, at, valueTransformed?}` — a Flink job is driven by a Flink option for this key. `how: "fallbackKey"`: the Flink option declares this key in `withFallbackKeys`, so a Flink job reads the Flink option and looks at this key only when the option is unset. `how: "builder:<method>"`: a Flink write-client builder copies the Flink option into this key. Either way, **with nothing set, a Flink writer gets `flinkDefault`**, not `defaultValue` and not `engineDefaults.flink`. `valueTransformed: true` means the cited line converts it (MB to bytes, an enum `valueOf`). |
 | `flinkOptionNote` | The standing caveat, present when `flinkOptions` is non-empty. |
+| `knownImplementations` | For a config that takes a class name: `{baseType, baseTypeFrom, count, classes, baseTypeAmbiguous?}`. `classes` are the fully qualified, concrete implementations of `baseType` found in this tree's `extends`/`implements` clauses (samples in `hudi-examples`, `hudi-integ-test` and `hudi-cli` left out). `baseTypeFrom` says whether the base type came from the documentation or from the default class's ancestry. `baseTypeAmbiguous` lists the packages that share the base type's simple name, so the list may mix two hierarchies. It is what ships, not what is valid: a user's own class on the classpath works too. `null` when not class-valued or not resolved. |
 
 `flinkOptions` overrides `engineDefaults.flink` where both exist. `hoodie.index.type` has
 `engineDefaults.flink = INMEMORY` from the write-config builder, but a Flink job reads `index.type`
