@@ -115,6 +115,25 @@ branches on something else. `conditionalEngineDefaults[<engine>]` gives the `con
 An engine missing from `engineDefaults` means the generator could not resolve a value for it. Say
 that rather than falling back to the declared value.
 
+## Step 1c — check the two other places a default can come from
+
+Before you state any default, look at two more fields. Either can make the declared value wrong for
+the user in front of you.
+
+- **`flinkOptions` non-empty and the user is on Flink (or did not say):** a Flink job does not read
+  this key the way Spark does. It reads the Flink option named in `flinkOption` — Flink's own key,
+  such as `compaction.delta_commits` or `index.type` — and with nothing set it gets `flinkDefault`.
+  Lead with the Flink option's name and default, then the `hoodie.*` key. For a Flink question this
+  is usually the whole answer: "set `compaction.delta_commits`, not
+  `hoodie.compact.inline.max.delta.commits`". It overrides `engineDefaults.flink`.
+- **`callSiteDefaults` non-empty:** some reads supply their own literal fallback that differs from
+  the declaration. Say which code path each one serves (open the cited line: a `V1` relation class
+  serves older table versions, `HoodieIncrSource` is Hudi Streamer) and give the default per path,
+  never just the declared one.
+
+Flink's own options (`FlinkOptions`) are not catalog entries. When `flinkOptions` names one, you
+know its key and default but not its documentation or other readers; say so if the user needs more.
+
 ## Step 2 — lead with the answer, then show the evidence
 
 The catalog is evidence. It is not the answer. Someone asking about a config wants to know what
@@ -198,8 +217,8 @@ plainly that you are doing so:
 - Then anything deprecated or inert, called out as such — that is often the highest-value line in
   the answer.
 
-`advanced: true` is a ranking signal: a knob for someone who has measured a problem. 834 of the
-989 configs are advanced, so it separates little on its own — use it to demote, not to dismiss.
+`advanced: true` is a ranking signal: a knob for someone who has measured a problem. 835 of the
+990 configs are advanced, so it separates little on its own — use it to demote, not to dismiss.
 
 ### The five question shapes
 
@@ -244,6 +263,10 @@ that verdict is never earned from the catalog alone. Read the sites, then run th
 
 Work this order and stop at the first hit:
 
+0. **Are they on Flink, and does the config have `flinkOptions`?** Then a Flink option is in
+   charge of this key, and the `hoodie.*` value they set may never be what the job reads. Name the
+   Flink option and its default. This is the most common cause of "I set it on Flink and nothing
+   happened", and nothing else in the ladder will find it.
 1. **Is the read gated?** `gatingConditions` — a read under a `switch` on a strategy enum, or an
    `if` on another config, is usually the answer.
 2. **Is it gated before the config is even consulted?** `shortCircuits` lists wrapper methods
@@ -258,7 +281,8 @@ Work this order and stop at the first hit:
    and the rest call the accessor incidentally; the shape is matched textually, the attribution is
    not verified. Confirm the literal return really bypasses this config, then report it. An
    unverified entry is a lead, not a finding.
-3. **Were they relying on the default?** `engineDefaults` differing from the declared value
+3. **Were they relying on the default?** `engineDefaults` or `callSiteDefaults` differing from
+   the declared value
    explains most "it was already on/off" reports. `setDefaultValue` applies only when the key is
    unset; an explicit value always wins.
 4. **Is a different key winning?** `alternatives`.

@@ -1235,6 +1235,8 @@ def resolve_constant(expr, owner_class, constant_index):
 # A name like this cannot identify a consumer at a call site, whatever its body
 # looks like.
 ACCESSOR_CALL_IN_GATE_RE = re.compile(r"\b([a-z][A-Za-z0-9_]*)\s*\(")
+# Scala calls a no-arg accessor without parentheses: `getConfig.inlineClusteringEnabled`.
+ACCESSOR_REF_IN_GATE_RE = re.compile(r"\b([a-z][A-Za-z0-9_]*)\b(?!\s*=)")
 
 
 GENERIC_METHOD_NAMES = frozenset((
@@ -1752,6 +1754,20 @@ def enclosing_gates(masked, body_start, site_index):
             if condition is None:
                 continue
             brace = masked.find("{", after)
+            if kind == "if" and (brace < 0 or masked[after:brace].strip()):
+                # Brace-less: `if (cond) return x;` in Java, `if (cond) a else b`
+                # in Scala. The statement runs to the end of its line, or the
+                # next line when the condition ends one.
+                line_end = masked.find("\n", after)
+                line_end = len(masked) if line_end < 0 else line_end
+                if not masked[after:line_end].strip():
+                    next_end = masked.find("\n", line_end + 1)
+                    line_end = len(masked) if next_end < 0 else next_end
+                if after <= site_index < line_end:
+                    text = summarize_condition(condition)
+                    if not CONDITION_NOISE_RE.match(text):
+                        gates.append("if (%s)" % text)
+                continue
             if brace < 0 or brace > site_index:
                 continue
             # Nothing but whitespace may sit between ")" and "{" for the brace
@@ -1788,6 +1804,66 @@ def enclosing_gates(masked, body_start, site_index):
     return gates[-MAX_GATES_PER_SITE:]
 
 
+def conjunction_gate(masked, lo, hi, site_index):
+    """The boolean expression a read is combined into, when it has `&&` / `||`.
+
+    ``asyncClusteringTriggerFnDefined && !client.getConfig.inlineClusteringEnabled
+    && client.getConfig.isAsyncClusteringEnabled`` is a gate on async clustering
+    -- inline wins -- with no `if` anywhere. The expression is the run of lines
+    joined by a trailing or leading boolean operator around the site.
+    """
+    start = masked.rfind("\n", lo, site_index) + 1 or lo
+    end = masked.find("\n", site_index, hi)
+    end = hi if end < 0 else end
+    for _ in range(6):
+        prev_end = start - 1
+        if prev_end <= lo:
+            break
+        prev_start = masked.rfind("\n", lo, prev_end) + 1 or lo
+        if masked[prev_start:prev_end].rstrip().endswith(("&&", "||")) or \
+                masked[start:end].lstrip().startswith(("&&", "||")):
+            start = prev_start
+        else:
+            break
+    for _ in range(6):
+        if end >= hi:
+            break
+        next_end = masked.find("\n", end + 1, hi)
+        next_end = hi if next_end < 0 else next_end
+        if masked[start:end].rstrip().endswith(("&&", "||")) or \
+                masked[end + 1:next_end].lstrip().startswith(("&&", "||")):
+            end = next_end
+        else:
+            break
+    text = masked[start:end]
+    if "&&" not in text and "||" not in text:
+        return None
+    # Trim to the expression: drop a leading `return`, assignment or `if (`.
+    text = re.sub(r"^\s*(?:return\b|(?:val|var|final)?\s*[\w<>\[\], ]*\b\w+\s*=(?!=)|if\s*\()", "", text)
+    return "when (%s)" % summarize_condition(text.strip().rstrip("{;").strip())
+
+
+SCALA_DEF_RE = re.compile(r"^(?P<indent>[ \t]*)(?:(?:private|protected|override|final|implicit|lazy)(?:\[[^\]]*\])?\s+)*def\s+(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)", re.M)
+
+
+def find_scala_method_spans(masked, original):
+    """Yield (name, start, end, line) for each Scala ``def``.
+
+    No Scala parser here: a def runs until the next def at the same or a
+    shallower indent, or the end of the file. Nested defs fall inside their
+    parent's span and also get their own, and the innermost wins at lookup.
+    """
+    defs = [(m.start(), len(m.group("indent").expandtabs(2)), m.group("name"))
+            for m in SCALA_DEF_RE.finditer(masked)]
+    for i, (start, indent, name) in enumerate(defs):
+        end = len(masked)
+        for later_start, later_indent, _ in defs[i + 1:]:
+            if later_indent <= indent:
+                end = later_start
+                break
+        yield name, start, end, line_of(original, start)
+
+
 def collect_read_sites(repo_root, constant_index, accessors, config_keys, verbose=False):
     """Pass 3. Returns key -> {"readSites": [...], "coConfigs": {key: count}}."""
     result = defaultdict(lambda: {"readSites": [], "coConfigs": defaultdict(int)})
@@ -1816,28 +1892,71 @@ def collect_read_sites(repo_root, constant_index, accessors, config_keys, verbos
             owner_class = class_match.group(1)
 
         if is_scala:
-            # There is no Scala method-body parser here. A Scala mention is
-            # recorded as a location only: no enclosing method, no co-configs and
-            # no gating, because inferring any of those would mean guessing.
-            # `scalaReadContextResolved: false` on the config says so outright,
-            # so an empty gate list is never mistaken for "this read is
-            # unconditional".
+            # A Scala mention gets its enclosing def from an indentation-based
+            # span finder, and its gates from the same textual `if` matcher the
+            # Java pass uses plus boolean conjunctions. That is shallower than
+            # the Java pass -- no `match` arms, no guards in for-comprehensions
+            # -- so the site stays marked `via: scalaReference` and
+            # `gatesResolved` says whether a method was found at all.
+            spans = list(find_scala_method_spans(masked, original))
+            per_method = defaultdict(list)
             for match in IDENTIFIER_RE.finditer(masked):
                 key, via = _identifier_to_key(match, owner_class, constant_index,
                                               unambiguous_bare, accessors)
                 if not key or key not in config_keys:
                     continue
-                bucket = result[key]
-                bucket["scalaReferences"] = bucket.get("scalaReferences", 0) + 1
-                if len(bucket["readSites"]) < COLLECT_READ_SITES:
+                # `def isAsyncClusteringEnabled(...)` names the accessor it shadows;
+                # the definition is not a read.
+                if re.search(r"\bdef\s+$", masked[max(0, match.start() - 12):match.start()]):
+                    continue
+                enclosing = None
+                for span in spans:
+                    if span[1] <= match.start() < span[2] and \
+                            (enclosing is None or span[1] >= enclosing[1]):
+                        enclosing = span
+                per_method[enclosing].append((key, match.start()))
+            for enclosing, hits in per_method.items():
+                lo, hi = (enclosing[1], enclosing[2]) if enclosing else (0, len(masked))
+                touched = OrderedDict((k, True) for k, _ in hits)
+                seen = set()
+                for key, index in hits:
+                    bucket = result[key]
+                    bucket["scalaReferences"] = bucket.get("scalaReferences", 0) + 1
+                    if key in seen:
+                        # A later mention in the same def can carry the gate the
+                        # first one lacked; fold it into the recorded site.
+                        if enclosing and bucket["readSites"]:
+                            site = bucket["readSites"][-1]
+                            if site["file"] == relative and site["method"] == enclosing[0]:
+                                extra = list(enclosing_gates(masked, lo, index))
+                                conj = conjunction_gate(masked, lo, hi, index)
+                                if conj:
+                                    extra.append(conj)
+                                for gate in extra:
+                                    if gate not in site["gates"] and \
+                                            len(site["gates"]) < MAX_GATES_PER_SITE * 2:
+                                        site["gates"].append(gate)
+                        continue
+                    seen.add(key)
+                    if enclosing:
+                        for other in touched:
+                            if other != key:
+                                bucket["coConfigs"][other] += 1
+                    if len(bucket["readSites"]) >= COLLECT_READ_SITES:
+                        stats["readSitesCapped"] += 1
+                        continue
+                    gates = list(enclosing_gates(masked, lo, index)) if enclosing else []
+                    conj = conjunction_gate(masked, lo, hi, index) if enclosing else None
+                    if conj and conj not in gates:
+                        gates.append(conj)
                     bucket["readSites"].append(OrderedDict([
                         ("class", owner_class),
-                        ("method", None),
+                        ("method", enclosing[0] if enclosing else None),
                         ("file", relative),
-                        ("line", line_of(original, match.start())),
+                        ("line", line_of(original, index)),
                         ("via", "scalaReference"),
-                        ("gatesResolved", False),
-                        ("gates", []),
+                        ("gatesResolved", enclosing is not None),
+                        ("gates", gates[:MAX_GATES_PER_SITE * 2]),
                     ]))
                     stats["readSites"] += 1
                     stats["scalaReadSites"] += 1
@@ -1891,6 +2010,9 @@ def collect_read_sites(repo_root, constant_index, accessors, config_keys, verbos
                     for gate in enclosing_gates(masked, body_start, use_index):
                         if gate not in gates:
                             gates.append(gate)
+                conj = conjunction_gate(masked, body_start, body_end, absolute_index)
+                if conj and conj not in gates:
+                    gates.append(conj)
 
                 bucket["readSites"].append(OrderedDict([
                     ("class", owner_class),
@@ -1981,6 +2103,280 @@ def _looks_like_constant(name):
 
 
 # --------------------------------------------------------------------------
+# Pass 4: defaults supplied at the call site
+# --------------------------------------------------------------------------
+
+# `optParams.getOrElse(INCREMENTAL_FALLBACK_TO_FULL_TABLE_SCAN.key, "false")`,
+# `props.getBoolean(SOME_CONFIG.key(), false)`. The literal is what the reader
+# gets when the key is unset, whatever the declaration says. When it disagrees
+# with the declared default the declaration is the wrong answer on that code
+# path: hoodie.datasource.read.incr.fallback.fulltablescan.enable declares
+# "true", and the V1 incremental relations that serve tables below version 8
+# read it with "false".
+CALL_SITE_DEFAULT_RE = re.compile(
+    r"\.\s*(?P<call>getOrElse|getOrDefault|getProperty|getBoolean|getInteger|getInt|getLong|"
+    r"getString|getDouble|getFloat|getBooleanOrDefault|getIntOrDefault|getLongOrDefault|"
+    r"getStringOrDefault)\s*\(\s*"
+    r"(?P<const>(?:[A-Za-z_$][A-Za-z0-9_$]*\s*\.\s*)*[A-Z][A-Z0-9_]*)\s*(?:\(\s*\))?"
+    r"(?:\s*\.\s*key\s*(?:\(\s*\))?)?\s*,\s*"
+    r"(?P<arg>\"(?:[^\"\\]|\\.)*\"|true|false|-?\d+(?:\.\d+)?[LlDdFf]?)\s*\)")
+
+
+def normalize_default(value):
+    """Compare defaults as written in different places: "true" vs true, 10L vs "10"."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if len(text) >= 2 and text[0] == text[-1] == '"':
+        text = text[1:-1]
+    # "", null and a cast null all mean "no default": an empty-string fallback
+    # against a noDefaultValue() declaration is not a disagreement.
+    if re.fullmatch(r"(?:\([A-Za-z_$][\w$.<>]*\)\s*)?(?:null|none)?", text.strip(), re.I):
+        return None
+    if re.match(r"^-?\d+(?:\.\d+)?[LlDdFf]$", text):
+        text = text[:-1]
+    return text.lower()
+
+
+def collect_call_site_defaults(repo_root, constant_index):
+    """key -> [{value, at, differsFromDeclared}] for explicit fallbacks at a read."""
+    found = defaultdict(list)
+    for file_path in walk_source_files(repo_root, READ_SITE_EXTENSIONS):
+        if SOURCE_DIR_MARKER not in file_path:
+            continue
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="replace") as handle:
+                original = handle.read()
+        except OSError:
+            continue
+        if ".key" not in original:
+            continue
+        is_scala = file_path.endswith(".scala")
+        # Comments blanked, string bodies kept: the fallback literal is the point.
+        text = strip_comments_and_strings(original, keep_string_bodies=True, scala=is_scala)
+        class_match = (SCALA_CLASS_DECL_RE if is_scala else CLASS_DECL_RE).search(text)
+        owner_class = class_match.group(1) if class_match else None
+        relative = os.path.relpath(file_path, repo_root)
+        for match in CALL_SITE_DEFAULT_RE.finditer(text):
+            const = re.sub(r"\s+", "", match.group("const"))
+            key = resolve_constant(const, owner_class, constant_index)
+            if not key:
+                continue
+            found[key].append(OrderedDict([
+                ("value", match.group("arg").strip('"')),
+                ("at", "%s (%s:%d)" % (owner_class or "?", relative,
+                                       line_of(original, match.start()))),
+            ]))
+    return found
+
+
+# --------------------------------------------------------------------------
+# Pass 5: Flink options that stand in for hoodie.* keys
+# --------------------------------------------------------------------------
+
+FLINK_OPTIONS_FILE = os.path.join(
+    "hudi-flink-datasource", "hudi-flink", "src", "main", "java", "org", "apache", "hudi",
+    "configuration", "FlinkOptions.java")
+FLINK_OPTION_DECL_RE = re.compile(
+    r"ConfigOption\s*<[^;=]*?>\s+(?P<name>[A-Z][A-Z0-9_]*)\s*=\s*ConfigOptions\s*\.\s*key\s*\(",
+    re.S)
+BUILDER_SETTER_RE = re.compile(
+    r"(?:setValue|setDefaultValue)\s*\(\s*(?P<const>(?:[A-Za-z_$][A-Za-z0-9_$]*\s*\.\s*)*[A-Z][A-Z0-9_]*)\s*,"
+    r"|setProperty\s*\(\s*(?P<const2>(?:[A-Za-z_$][A-Za-z0-9_$]*\s*\.\s*)*[A-Z][A-Z0-9_]*)\s*\.\s*key\s*\(\s*\)\s*,")
+FLINK_OPTION_REF_RE = re.compile(r"\bFlinkOptions\s*\.\s*([A-Z][A-Z0-9_]*)\b")
+
+
+def collect_flink_options(repo_root, constant_index):
+    """FlinkOptions constant -> {key, default, fallbackKeys, line}.
+
+    These live in Flink's own key namespace and are not catalog entries, but a
+    Flink job reads them in place of the hoodie.* key they stand in for.
+    """
+    path = os.path.join(repo_root, FLINK_OPTIONS_FILE)
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            original = handle.read()
+    except OSError:
+        return {}
+    text = strip_comments_and_strings(original, keep_string_bodies=True)
+    options = {}
+    for match in FLINK_OPTION_DECL_RE.finditer(text):
+        end = find_statement_end(text, match.end())
+        chain = text[match.end() - 1:end]
+        key_text, _ = extract_call_args(chain, 0)
+        key_args = split_top_level_args(key_text) if key_text else []
+        key = key_args[0].strip().strip('"') if key_args else None
+        default = None
+        dm = re.search(r"\.\s*defaultValue\s*\(", chain)
+        if dm:
+            args_text, _ = extract_call_args(chain, dm.end() - 1)
+            if args_text:
+                default, _ = literal_or_expression(args_text.strip())
+                default = " ".join(str(default).split()).strip('"') if default is not None else None
+                enum_name = re.match(r"^(?:[A-Za-z_$][\w$]*\.)*([A-Z][A-Z0-9_]*)\.name\(\)$", default or "")
+                if enum_name:
+                    default = enum_name.group(1)
+        fallbacks = []
+        fm = re.search(r"\.\s*withFallbackKeys\s*\(", chain)
+        if fm:
+            fallback_text, _ = extract_call_args(chain, fm.end() - 1)
+            for arg in split_top_level_args(fallback_text or ""):
+                arg = arg.strip()
+                if arg.startswith('"'):
+                    fallbacks.append(arg.strip('"'))
+                else:
+                    resolved = resolve_constant(re.sub(r"\.key\(\)$", "", arg), None, constant_index)
+                    if resolved:
+                        fallbacks.append(resolved)
+        if key and not key.startswith('"') and "(" in key:
+            key = resolve_constant(re.sub(r"\.\s*key\s*\(\s*\)$", "", key), None, constant_index) or key
+        options[match.group("name")] = OrderedDict([
+            ("key", key), ("default", default), ("fallbackKeys", fallbacks),
+            ("line", line_of(original, match.start()))])
+    return options
+
+
+def collect_builder_setters(repo_root, constant_index):
+    """Builder method name -> list of (param index, config key) it sets.
+
+    `withMaxNumDeltaCommitsBeforeCompaction(int n)` sets
+    hoodie.compact.inline.max.delta.commits from its first argument. A method
+    whose name is shared by builders that set different configs is dropped
+    rather than guessed at.
+    """
+    setters = {}
+    conflicts = set()
+    for file_path in walk_source_files(repo_root, (".java",)):
+        if SOURCE_DIR_MARKER not in file_path or not os.path.basename(file_path).endswith("Config.java"):
+            continue
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="replace") as handle:
+                original = handle.read()
+        except OSError:
+            continue
+        if "Builder" not in original:
+            continue
+        masked = strip_comments_and_strings(original)
+        class_match = CLASS_DECL_RE.search(masked)
+        owner_class = class_match.group(1) if class_match else None
+        for name, body_start, body_end, _ in find_method_bodies(masked, original):
+            if not name.startswith("with") and not name.startswith("enable") \
+                    and not name.endswith("With"):
+                continue
+            sig_open = masked.rfind("(", 0, body_start)
+            sig_close = masked.rfind(")", 0, body_start)
+            params = [p.strip().split()[-1] for p in
+                      split_top_level_args(masked[sig_open + 1:sig_close]) if p.strip()]
+            body = masked[body_start:body_end]
+            mapping = []
+            for setter in BUILDER_SETTER_RE.finditer(body):
+                const = re.sub(r"\s+", "", setter.group("const") or setter.group("const2"))
+                key = resolve_constant(const, owner_class, constant_index)
+                if not key:
+                    continue
+                rest = body[setter.end():body.find(";", setter.end())]
+                used = [i for i, p in enumerate(params) if re.search(r"\b%s\b" % re.escape(p), rest)]
+                if len(used) == 1:
+                    mapping.append((used[0], key))
+            if not mapping:
+                continue
+            mapping = tuple(sorted(set(mapping)))
+            setters[(owner_class, name)] = mapping
+            if name in setters and setters[name] != mapping:
+                conflicts.add(name)
+            setters[name] = mapping
+    for name in conflicts:
+        setters.pop(name, None)
+    return setters
+
+
+NEW_BUILDER_RE = re.compile(r"\b([A-Z][A-Za-z0-9_]*Config)\s*\.\s*newBuilder\s*\(")
+
+
+def builder_receiver(masked, index):
+    """The *Config class whose builder chain a call at ``index`` belongs to.
+
+    ``.withCompactionConfig(HoodieCompactionConfig.newBuilder().withX(..).build())``:
+    the nearest ``Foo.newBuilder(`` before the call whose chain has not been
+    closed by a ``.build()`` yet. Good enough to tell HoodieCompactionConfig's
+    withMaxNumDeltaCommitsBeforeCompaction from HoodieMetadataConfig's.
+    """
+    window = masked[max(0, index - 4000):index]
+    for match in reversed(list(NEW_BUILDER_RE.finditer(window))):
+        if not re.search(r"\.\s*build\s*\(\s*\)", window[match.end():]):
+            return match.group(1)
+    return None
+
+
+def collect_flink_mappings(repo_root, constant_index):
+    """hoodie.* key -> [{flinkOption, flinkDefault, how, at}].
+
+    Two shapes put a Flink option in charge of a hoodie.* key:
+
+    - ``withFallbackKeys(HoodieIndexConfig.INDEX_TYPE.key())`` on the Flink
+      option: the job reads ``index.type`` (default FLINK_STATE) and only looks
+      at hoodie.index.type when the Flink option is unset.
+    - the Flink write-client builders copy an option into the write config,
+      ``.withMaxNumDeltaCommitsBeforeCompaction(conf.get(FlinkOptions.COMPACTION_DELTA_COMMITS))``,
+      so an unset hoodie.compact.inline.max.delta.commits gets the Flink
+      option's default (5), not the declared one.
+    """
+    options = collect_flink_options(repo_root, constant_index)
+    if not options:
+        return {}, {}
+    mappings = defaultdict(list)
+    for name, option in options.items():
+        for fallback in option["fallbackKeys"]:
+            if fallback.startswith("hoodie."):
+                mappings[fallback].append(OrderedDict([
+                    ("flinkOption", option["key"]), ("flinkDefault", option["default"]),
+                    ("how", "fallbackKey"),
+                    ("at", "FlinkOptions.%s (%s:%d)" % (name, FLINK_OPTIONS_FILE, option["line"]))]))
+
+    setters = collect_builder_setters(repo_root, constant_index)
+    flink_root = os.path.join(repo_root, "hudi-flink-datasource")
+    for file_path in walk_source_files(flink_root, (".java",)):
+        if SOURCE_DIR_MARKER not in file_path:
+            continue
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="replace") as handle:
+                original = handle.read()
+        except OSError:
+            continue
+        if "FlinkOptions." not in original:
+            continue
+        masked = strip_comments_and_strings(original)
+        relative = os.path.relpath(file_path, repo_root)
+        class_match = CLASS_DECL_RE.search(masked)
+        owner_class = class_match.group(1) if class_match else "?"
+        for call in re.finditer(r"\.\s*([a-z][A-Za-z0-9]*)\s*\(", masked):
+            receiver = builder_receiver(masked, call.start())
+            mapping = setters.get((receiver, call.group(1))) if receiver else None
+            mapping = mapping or setters.get(call.group(1))
+            if not mapping:
+                continue
+            args_text, _ = extract_call_args(masked, call.end() - 1)
+            args = split_top_level_args(args_text or "")
+            for index, key in mapping:
+                if index >= len(args):
+                    continue
+                refs = FLINK_OPTION_REF_RE.findall(args[index])
+                if len(refs) != 1 or refs[0] not in options:
+                    continue
+                option = options[refs[0]]
+                direct = re.fullmatch(r"\s*conf\s*\.\s*get(?:String|Integer|Boolean|Long|Double)?\s*\(\s*FlinkOptions\s*\.\s*[A-Z][A-Z0-9_]*\s*\)\s*",
+                                      args[index])
+                record = OrderedDict([
+                    ("flinkOption", option["key"]), ("flinkDefault", option["default"]),
+                    ("valueTransformed", not direct),
+                    ("how", "builder:" + call.group(1)),
+                    ("at", "%s (%s:%d)" % (owner_class, relative, line_of(original, call.start())))])
+                if all(r["flinkOption"] != record["flinkOption"] for r in mappings[key]):
+                    mappings[key].append(record)
+    return mappings, options
+
+
+# --------------------------------------------------------------------------
 # Assembly and output
 # --------------------------------------------------------------------------
 
@@ -2030,6 +2426,14 @@ def build_catalog(repo_root, verbose=False):
     engine_defaults, engine_stats = collect_engine_defaults(repo_root, constant_index)
     if verbose:
         print("  configs with engine-specific defaults: %d" % len(engine_defaults),
+              file=sys.stderr)
+
+    call_site_defaults = collect_call_site_defaults(repo_root, constant_index)
+    flink_mappings, _ = collect_flink_mappings(repo_root, constant_index)
+    if verbose:
+        print("  configs with a call-site default: %d" % len(call_site_defaults),
+              file=sys.stderr)
+        print("  configs a Flink option stands in for: %d" % len(flink_mappings),
               file=sys.stderr)
 
     # Merge duplicate keys (same key declared in several classes -- re-exports
@@ -2113,6 +2517,35 @@ def build_catalog(repo_root, verbose=False):
         else:
             entry["engineDefaults"] = None
 
+        # A literal fallback at the read beats the declaration on that code path.
+        # Only the disagreeing ones are worth a reader's attention.
+        declared = normalize_default(entry.get("defaultValue"))
+        differing = [site for site in call_site_defaults.get(key, [])
+                     if normalize_default(site["value"]) != declared]
+        entry["callSiteDefaults"] = differing[:10]
+        if differing:
+            entry["callSiteDefaultNote"] = (
+                "These reads supply their own fallback when the key is unset, and it differs "
+                "from the declared default. On the cited code path the declared default is "
+                "not what the user gets. Open the site to see which path (table version, "
+                "relation class, source) it serves.")
+
+        # A Flink job reads a Flink option in place of this key, or copies one into
+        # it, so the declared default is not what a Flink writer gets.
+        flink = [m for m in flink_mappings.get(key, [])
+                 if not (m["flinkOption"] == key and m["flinkDefault"] is None)]
+        entry["flinkOptions"] = flink
+        if flink:
+            entry["flinkOptionNote"] = (
+                "On Flink this key is driven by a Flink option. 'fallbackKey': the job reads "
+                "the Flink option and consults this key only when the Flink option is unset, so "
+                "flinkDefault is the effective default. 'builder:<method>': the Flink write "
+                "client copies the Flink option into this key, so with this key unset a Flink "
+                "writer gets flinkDefault (valueTransformed: true means a unit conversion or "
+                "other expression is applied at the cited line). An explicit hoodie.* key passed "
+                "through the Flink table options is applied after the builder in FlinkWriteClients "
+                "and wins; check the cited line for other builders.")
+
         data = read_data.get(key)
         if data:
             entry["readSites"] = sorted(
@@ -2145,7 +2578,7 @@ def build_catalog(repo_root, verbose=False):
             # separately so they are not flattened into a co-occurrence count.
             gating_refs = OrderedDict()
             for gate, where in gates.items():
-                for call in ACCESSOR_CALL_IN_GATE_RE.finditer(gate):
+                for call in ACCESSOR_REF_IN_GATE_RE.finditer(gate):
                     other = accessors.get(call.group(1))
                     if other and other != key:
                         gating_refs.setdefault(other, (call.group(1), where))
@@ -2183,15 +2616,16 @@ def build_catalog(repo_root, verbose=False):
         # co-configs and no gates -- which must not read as "nothing gates it".
         scala_sites = sum(1 for site in entry["readSites"]
                           if site.get("via") == "scalaReference")
+        unresolved = sum(1 for site in entry["readSites"] if not site.get("gatesResolved"))
         entry["scalaReadSites"] = scala_sites
-        entry["readContextResolved"] = bool(entry["readSites"]) and scala_sites == 0
+        entry["readContextResolved"] = bool(entry["readSites"]) and unresolved == 0
         if scala_sites:
             entry["readContextNote"] = (
-                "%d of %d recorded read sites are in Scala, where this generator resolves "
-                "the file and line but not the enclosing method, co-configs or gating "
-                "conditions. Absence of a gate here is not evidence the read is "
-                "unconditional; check the cited line."
-                % (scala_sites, len(entry["readSites"])))
+                "%d of %d recorded read sites are in Scala (%d with no enclosing def found). "
+                "Scala gating is shallower than Java's: `if` blocks and `&&`/`||` "
+                "conjunctions are recovered, `match` arms and guards are not. Absence of a "
+                "gate at a Scala site is weak evidence; check the cited line."
+                % (scala_sites, len(entry["readSites"]), unresolved))
         entry["gatingHeuristic"] = (
             "Conditions are recovered by text matching on enclosing if/switch blocks. "
             "They indicate where a read is conditional; they are not a complete or "
@@ -2209,6 +2643,8 @@ def build_catalog(repo_root, verbose=False):
         entry["accessors"] = []
         entry["aliasConstants"] = []
         entry["shortCircuits"] = []
+        entry["callSiteDefaults"] = []
+        entry["flinkOptions"] = []
         configs.append(entry)
 
     stats = {
@@ -2224,6 +2660,8 @@ def build_catalog(repo_root, verbose=False):
         "scalaDeclarations": decl_stats["scalaDeclarationsParsed"],
         "scalaReadSites": read_stats["scalaReadSites"],
         "configsWithEngineDefaults": len(engine_defaults),
+        "configsWithCallSiteDefaults": sum(1 for c in configs if c.get("callSiteDefaults")),
+        "configsWithFlinkOptions": sum(1 for c in configs if c.get("flinkOptions")),
         "configsWithConfigDependentDefaults": sum(
             1 for record in engine_defaults.values()
             if record.get("defaultIsConfigDependent")),
@@ -2365,7 +2803,7 @@ def main(argv=None):
     catalog = OrderedDict([
         # 2: adds engineDefaults / conditionalEngineDefaults, and Scala-declared
         # configs with their readContextResolved honesty flag.
-        ("schemaVersion", 3),
+        ("schemaVersion", 4),
         ("hudiVersion", read_project_version(repo_root)),
         ("generatedFrom", read_git_sha(repo_root)),
         ("configs", configs),
@@ -2395,6 +2833,9 @@ def main(argv=None):
     print("Engine defaults   : %d configs (%d also config-dependent)"
           % (stats["configsWithEngineDefaults"],
              stats["configsWithConfigDependentDefaults"]))
+    print("Call-site defaults: %d configs read with a fallback that differs from the declared default"
+          % stats["configsWithCallSiteDefaults"])
+    print("Flink options     : %d configs driven by a Flink option on Flink" % stats["configsWithFlinkOptions"])
     print("Aliases resolved  : %d (unresolved %d)"
           % (stats["aliasesResolved"], stats["aliasesUnresolved"]))
     print("Accessors         : %d" % stats["accessorsResolved"])

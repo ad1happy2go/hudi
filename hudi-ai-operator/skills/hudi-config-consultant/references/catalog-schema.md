@@ -22,7 +22,7 @@ limitations under the License.
 
 ```json
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "hudiVersion": "1.3.0-SNAPSHOT",
   "generatedFrom": "<git sha of the tree it was generated from>",
   "configs": [ ... ]
@@ -31,7 +31,8 @@ limitations under the License.
 
 `schemaVersion` 2 adds `engineDefaults` / `conditionalEngineDefaults`, the `language` field, and
 the `readContextResolved` honesty flag for Scala-declared configs. `schemaVersion` 3 adds
-`shortCircuits` / `shortCircuitHeuristic`, `gatedBy` and `noExternalConsumer`.
+`shortCircuits` / `shortCircuitHeuristic`, `gatedBy` and `noExternalConsumer`. `schemaVersion` 4
+adds `callSiteDefaults` and `flinkOptions`.
 
 `configs` is sorted by `key`, so regeneration produces a readable diff. Read `hudiVersion` and
 `generatedFrom` on every query; they belong in your answer.
@@ -90,7 +91,7 @@ The nine, as generated against this tree:
 | `hoodie.metadata.index.column.stats.enable` | `false` | **`true`** | `false` | `false` |
 | `hoodie.metadata.index.secondary.enable` | `true` | `true` | **`false`** | `true` |
 | `hoodie.metadata.streaming.write.enabled` | `false` | **`true`** | `false` | `false` |
-| `hoodie.index.type` | *(none)* | `SIMPLE` | `INMEMORY` | `SIMPLE` |
+| `hoodie.index.type` | *(none)* | `SIMPLE` | `INMEMORY` (but see `flinkOptions`: a Flink job gets `FLINK_STATE`) | `SIMPLE` |
 | `hoodie.write.markers.type` | `TIMELINE_SERVER_BASED` | *conditional* | `DIRECT` | `DIRECT` |
 | `hoodie.parquet.compression.codec` | *(none)* | *conditional* | `zstd` | `gzip` |
 | `hoodie.clustering.plan.strategy.class` | Spark size-based | *conditional* | *conditional* | Java size-based |
@@ -104,6 +105,25 @@ The conditional ones:
   config).
 - **clustering plan and execution strategy** — the consistent-hashing bucket-index variant if
   `isConsistentHashingBucketIndex()`, else the size-based/sort-and-size one.
+
+### Defaults supplied somewhere other than the declaration
+
+Two more places decide what a user gets when the key is unset. Both are extracted from code, not
+inferred, but each applies only on the code path it names.
+
+| Field | Meaning |
+|---|---|
+| `callSiteDefaults` | Reads that pass their own literal fallback — `getOrElse(X.key, "false")`, `props.getString(X.key(), "false")` — **and that literal differs from `defaultValue`**: `{value, at}`. On that path the declared default is wrong. `hoodie.datasource.read.incr.fallback.fulltablescan.enable` declares `true`, but the V1 incremental relations (tables below version 8), `HoodieIncrSource` and `QueryRunner` read it with `false`. Always say which path each value applies to. |
+| `callSiteDefaultNote` | The standing caveat, present when `callSiteDefaults` is non-empty. |
+| `flinkOptions` | `{flinkOption, flinkDefault, how, at, valueTransformed?}` — a Flink job is driven by a Flink option for this key. `how: "fallbackKey"`: the Flink option declares this key in `withFallbackKeys`, so a Flink job reads the Flink option and looks at this key only when the option is unset. `how: "builder:<method>"`: a Flink write-client builder copies the Flink option into this key. Either way, **with nothing set, a Flink writer gets `flinkDefault`**, not `defaultValue` and not `engineDefaults.flink`. `valueTransformed: true` means the cited line converts it (MB to bytes, an enum `valueOf`). |
+| `flinkOptionNote` | The standing caveat, present when `flinkOptions` is non-empty. |
+
+`flinkOptions` overrides `engineDefaults.flink` where both exist. `hoodie.index.type` has
+`engineDefaults.flink = INMEMORY` from the write-config builder, but a Flink job reads `index.type`
+(default `FLINK_STATE`) and passes that to the builder, so `FLINK_STATE` is what a Flink user gets.
+Likewise `hoodie.compact.inline.max.delta.commits` declares `5` and a Flink job gets
+`compaction.delta_commits` (also `5`) — setting the `hoodie.*` key in the Flink table options still
+wins, because `FlinkWriteClients` applies the raw options after its builder steps.
 
 ### Derived context — recovered from code, heuristic
 
