@@ -2451,6 +2451,200 @@ def collect_flink_mappings(repo_root, constant_index):
 
 
 # --------------------------------------------------------------------------
+# Pass 7: what an infer function reads
+# --------------------------------------------------------------------------
+
+INFER_HELPER_SKIP = frozenset((
+    "of", "ofNullable", "empty", "isPresent", "get", "getOrElse", "orElse", "map", "flatMap",
+    "filter", "contains", "equals", "equalsIgnoreCase", "toString", "valueOf", "name", "key",
+    "getProps", "getString", "getStringOrDefault", "getBoolean", "getBooleanOrDefault",
+    "getInt", "getIntOrDefault", "getLong", "getLongOrDefault", "getDouble", "isNullOrEmpty",
+    "nonEmpty", "isEmpty", "split", "trim", "toJavaFunction", "apply", "getName", "length",
+    "size", "stream", "collect", "toUpperCase", "toLowerCase", "format", "startsWith",
+    "endsWith", "getProperty", "containsKey", "defaultValue", "ofNullable", "orNull",
+))
+CONSTANT_REF_RE = re.compile(r"\b(?:([A-Z][A-Za-z0-9_$]*)\s*\.\s*)?([A-Z][A-Z0-9_]{2,})\b")
+
+
+def _config_refs(text, owner_class, constant_index, imports, accessors, string_keys=None):
+    keys = []
+    for match in CONSTANT_REF_RE.finditer(text):
+        expr = "%s.%s" % (match.group(1), match.group(2)) if match.group(1) else match.group(2)
+        key = resolve_constant(expr, owner_class, constant_index, imports)
+        if not key and string_keys:
+            # `cfg.contains(CLEANER_COMMITS_RETAINED_KEY)`: a plain String
+            # constant holding a config key, not the ConfigProperty.
+            key = string_keys.get((match.group(1) or owner_class, match.group(2))) \
+                or string_keys.get((None, match.group(2)))
+        if key and key not in keys:
+            keys.append(key)
+    for match in re.finditer(r"\b([a-z][A-Za-z0-9_]*)\s*\(", text):
+        key = accessors.get(match.group(1))
+        if key and key not in keys:
+            keys.append(key)
+    return keys
+
+
+def collect_infer_sources(repo_root, entries, constant_index, accessors, string_constants=None):
+    """key -> {at, reads, viaHelpers} for configs declared withInferFunction(...).
+
+    The function either names the configs it reads inline -- `cfg ->
+    cfg.getStringOrDefault(FileSystemViewStorageConfig.SPILLABLE_DIR)` -- or
+    hands off to a helper (`HoodieTableConfigUtils::inferPartitionValueExtractorClass`,
+    `DataSourceOptionsHelper.inferKeyGenClazz`). Helpers are followed one hop.
+    """
+    pending = []
+    helper_names = set()
+    file_cache = {}
+    config_keys = {e["key"] for e in entries if e.get("key")}
+    string_keys = {}
+    for ref, value in (string_constants or {}).items():
+        literal = value.strip()
+        if len(literal) >= 2 and literal[0] == literal[-1] == '"' and literal[1:-1] in config_keys:
+            string_keys[ref] = literal[1:-1]
+
+    def load(rel):
+        if rel not in file_cache:
+            path = os.path.join(repo_root, rel)
+            try:
+                with open(path, "r", encoding="utf-8", errors="replace") as handle:
+                    original = handle.read()
+            except OSError:
+                original = ""
+            is_scala = rel.endswith(".scala")
+            file_cache[rel] = (original, strip_comments_and_strings(original, scala=is_scala),
+                               static_imports(original))
+        return file_cache[rel]
+
+    for entry in entries:
+        if not entry.get("hasInferFunction") or not entry.get("key"):
+            continue
+        declared = entry["declaredIn"]
+        original, masked, imports = load(declared["file"])
+        if not masked:
+            continue
+        start = sum(len(line) + 1 for line in masked.split("\n")[:declared["line"] - 1])
+        call = re.compile(r"\.\s*withInferFunction\s*\(").search(masked, start)
+        if not call or call.start() - start > 4000:
+            continue
+        arg_text, _ = extract_call_args(masked, call.end() - 1)
+        arg_text = (arg_text or "").strip()
+        at = "%s (%s:%d)" % (declared.get("class") or "?", declared["file"],
+                             line_of(original, call.start()))
+        # `withInferFunction(keyGeneratorInferFunc)`: follow the val to its body.
+        if re.fullmatch(r"[A-Za-z_$][\w$]*", arg_text):
+            definition = re.search(r"\b(?:val|var|def)\s+%s\b[^=]*=" % re.escape(arg_text), masked) \
+                or re.search(r"\b%s\s*=" % re.escape(arg_text), masked)
+            if definition:
+                if declared["file"].endswith(".scala"):
+                    end = find_scala_statement_end(masked, definition.end())
+                else:
+                    end = find_statement_end(masked, definition.end())
+                if end < 0 or end - definition.end() > 3000:
+                    end = min(len(masked), definition.end() + 600)
+                arg_text = masked[definition.end():end]
+        helpers = set()
+        for match in re.finditer(r"(?:::|\.)\s*([a-z][A-Za-z0-9_]*)\b", arg_text):
+            if match.group(1) not in INFER_HELPER_SKIP and match.group(1) not in accessors:
+                helpers.add(match.group(1))
+        helper_names |= helpers
+        pending.append((entry, arg_text, helpers, at, declared.get("class"), imports))
+
+    # One hop into the helpers: find each by name across the tree.
+    helper_bodies = defaultdict(list)
+    if helper_names:
+        name_re = re.compile(r"\b(?:%s)\b" % "|".join(sorted(map(re.escape, helper_names))))
+        for file_path in walk_source_files(repo_root, (".java", ".scala")):
+            if SOURCE_DIR_MARKER not in file_path:
+                continue
+            try:
+                with open(file_path, "r", encoding="utf-8", errors="replace") as handle:
+                    original = handle.read()
+            except OSError:
+                continue
+            if not name_re.search(original):
+                continue
+            is_scala = file_path.endswith(".scala")
+            masked = strip_comments_and_strings(original, scala=is_scala)
+            class_match = (SCALA_CLASS_DECL_RE if is_scala else CLASS_DECL_RE).search(masked)
+            owner = class_match.group(1) if class_match else None
+            imports = static_imports(original)
+            relative = os.path.relpath(file_path, repo_root)
+            spans = (find_scala_method_spans(masked, original) if is_scala else
+                     ((n, s, e, l) for n, s, e, l in find_method_bodies(masked, original)))
+            for name, body_start, body_end, line in spans:
+                if name in helper_names:
+                    helper_bodies[name].append((masked[body_start:body_end], owner, imports,
+                                                "%s.%s (%s:%d)" % (owner or "?", name, relative, line)))
+
+    def helpers_in(text):
+        return {m.group(1) for m in re.finditer(r"(?:::|\.|\b)([a-z][A-Za-z0-9_]*)\s*\(", text)
+                if m.group(1) not in INFER_HELPER_SKIP and m.group(1) not in accessors}
+
+    # Second hop: a helper that only dispatches to another helper
+    # (inferKeyGenClazz -> inferKeyGeneratorTypeFromWriteConfig).
+    second = set()
+    for name in list(helper_bodies):
+        for body, _, _, _ in helper_bodies[name]:
+            second |= helpers_in(body) - set(helper_bodies)
+    if second:
+        name_re = re.compile(r"\b(?:%s)\b" % "|".join(sorted(map(re.escape, second))))
+        for file_path in walk_source_files(repo_root, (".java", ".scala")):
+            if SOURCE_DIR_MARKER not in file_path:
+                continue
+            try:
+                with open(file_path, "r", encoding="utf-8", errors="replace") as handle:
+                    original = handle.read()
+            except OSError:
+                continue
+            if not name_re.search(original):
+                continue
+            is_scala = file_path.endswith(".scala")
+            masked = strip_comments_and_strings(original, scala=is_scala)
+            class_match = (SCALA_CLASS_DECL_RE if is_scala else CLASS_DECL_RE).search(masked)
+            owner = class_match.group(1) if class_match else None
+            imports = static_imports(original)
+            relative = os.path.relpath(file_path, repo_root)
+            spans = (find_scala_method_spans(masked, original) if is_scala else
+                     find_method_bodies(masked, original))
+            for name, body_start, body_end, line in spans:
+                if name in second:
+                    helper_bodies[name].append((masked[body_start:body_end], owner, imports,
+                                                "%s.%s (%s:%d)" % (owner or "?", name, relative, line)))
+
+    result = {}
+    for entry, arg_text, helpers, at, owner, imports in pending:
+        key = entry["key"]
+        reads = [k for k in _config_refs(arg_text, owner, constant_index, imports, accessors)
+                 if k != key]
+        via = []
+        reads = [k for k in _config_refs(arg_text, owner, constant_index, imports, accessors, string_keys)
+                 if k != key]
+        frontier, visited = sorted(helpers), set()
+        for _hop in range(2):
+            following = []
+            for helper in frontier:
+                if helper in visited:
+                    continue
+                visited.add(helper)
+                bodies = helper_bodies.get(helper, [])
+                if not bodies or len(bodies) > 3:
+                    continue
+                for body, body_owner, body_imports, where in bodies:
+                    found = [k for k in _config_refs(body, body_owner, constant_index, body_imports,
+                                                     accessors, string_keys) if k != key]
+                    if found:
+                        via.append(where)
+                        for k in found:
+                            if k not in reads:
+                                reads.append(k)
+                    following += sorted(helpers_in(body))
+            frontier = following
+        result[key] = OrderedDict([("at", at), ("reads", reads[:15]), ("viaHelpers", via[:5])])
+    return result
+
+
+# --------------------------------------------------------------------------
 # Pass 6: implementations that ship for class-valued configs
 # --------------------------------------------------------------------------
 
@@ -2660,6 +2854,8 @@ def build_catalog(repo_root, verbose=False):
 
     known_implementations = collect_known_implementations(
         entries, collect_type_hierarchy(repo_root))
+    infer_sources = collect_infer_sources(repo_root, entries, constant_index, accessors,
+                                          collect_string_constants(repo_root))
     call_site_defaults = collect_call_site_defaults(repo_root, constant_index)
     flink_mappings, _ = collect_flink_mappings(repo_root, constant_index)
     if verbose:
@@ -2753,6 +2949,9 @@ def build_catalog(repo_root, verbose=False):
         # extends/implements clauses, so a class loaded by reflection from
         # outside this tree is never listed.
         entry["knownImplementations"] = known_implementations.get(key)
+        # What an unset value is inferred from. `reads` names the configs the
+        # infer function (and up to two hops of helpers) consults.
+        entry["inferredFrom"] = infer_sources.get(key) if entry.get("hasInferFunction") else None
 
         # A literal fallback at the read beats the declaration on that code path.
         # Only the disagreeing ones are worth a reader's attention.
@@ -2883,6 +3082,7 @@ def build_catalog(repo_root, verbose=False):
         entry["callSiteDefaults"] = []
         entry["flinkOptions"] = []
         entry["knownImplementations"] = None
+        entry["inferredFrom"] = None
         configs.append(entry)
 
     stats = {

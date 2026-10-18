@@ -309,8 +309,9 @@ Work this order and stop at the first hit:
    unset; an explicit value always wins.
 4. **Is a different key winning?** `alternatives`.
 5. **Is it deprecated?** `deprecatedAfter`, against the catalog's `hudiVersion`.
-6. **Is it inferred?** `hasInferFunction: true` — and the infer function may read a config they
-   also changed.
+6. **Is it inferred?** `hasInferFunction: true` — `inferredFrom.reads` names the configs the
+   inferred value is computed from. If the user changed one of those, the value they never set
+   changed with it; if they set this key explicitly, the inference is skipped.
 7. **Are there no read sites?** `readSites: []` with a `parseWarnings` entry is a gap in the
    catalog, not proof the config is dead. Say which it is.
 
