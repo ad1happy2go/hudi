@@ -78,6 +78,10 @@ looking:
    `hudi-client/` and `pom.xml`): read the cited `file:line` there.
 2. **Otherwise, if you can fetch URLs:** fetch the file at the catalog's commit,
    `https://raw.githubusercontent.com/apache/hudi/<generatedFrom>/<file>`, and read around the line.
+   The catalog is regenerated on a branch, so `generatedFrom` may be a commit that never reached
+   `apache/hudi` (a squash-merged PR, a fork). On a 404, fall back once: to the release tag
+   `release-<hudiVersion>` for a release, or to `master` for a `-SNAPSHOT` version. Say which ref you
+   read and that line numbers can drift from the catalog's; do not retry other refs.
 3. **Otherwise:** answer from the catalog alone and say once that the code-level claims are the
    catalog's, not checked against source.
 
