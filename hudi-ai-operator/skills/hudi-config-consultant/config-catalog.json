@@ -1,7 +1,7 @@
 {
   "schemaVersion": 4,
   "hudiVersion": "1.3.0-SNAPSHOT",
-  "generatedFrom": "53c3206301d28615d009303dd76b461ea482bb1f",
+  "generatedFrom": "3d7bad019782d3836e518379f6f40681311a50fb",
   "configs": [
     {
       "key": "_.hoodie.allow.multi.write.on.same.instant",

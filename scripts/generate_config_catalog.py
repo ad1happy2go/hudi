@@ -337,17 +337,22 @@ def split_top_level_args(arg_text):
 
 def extract_call_args(text, call_start):
     """Given an index at the ``(`` of a call, return (args_text, index_past_close)."""
-    masked = strip_comments_and_strings(text)
     if call_start >= len(text) or text[call_start] != "(":
         return None, call_start
-    depth = 0
-    for i in range(call_start, len(masked)):
-        if masked[i] == "(":
-            depth += 1
-        elif masked[i] == ")":
-            depth -= 1
-            if depth == 0:
-                return text[call_start + 1:i], i + 1
+    # Mask only from the call forward: masking the whole file on every call
+    # was most of the generator's run time. Offsets are relative to call_start.
+    for window in (8000, len(text) - call_start):
+        masked = strip_comments_and_strings(text[call_start:call_start + window])
+        depth = 0
+        for i, ch in enumerate(masked):
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    return text[call_start + 1:call_start + i], call_start + i + 1
+        if call_start + window >= len(text):
+            break
     return None, call_start
 
 
