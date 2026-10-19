@@ -1335,6 +1335,31 @@ def accessor_name_matches_key(method_name, key):
     return False
 
 
+PRIMARY_ACCESSOR_CLASS = "HoodieWriteConfig"
+# accessor name -> {declaring class: key}, for names declared by several classes.
+AMBIGUOUS_ACCESSORS = {}
+
+
+def accessor_key_for_receiver(name, preceding, default):
+    """Pick among same-named accessors by the receiver written before the call.
+
+    `metaClient.getTableConfig().getTableType()` and `tableConfig.getTableType()`
+    name HoodieTableConfig; `getMetadataConfig().getBloomFilterType()` names
+    HoodieMetadataConfig. Anything else keeps the HoodieWriteConfig default.
+    """
+    options = AMBIGUOUS_ACCESSORS.get(name)
+    if not options:
+        return default
+    receiver = re.split(r"[\s;,(=!&|{}]", preceding.rstrip(". \n\t"))[-1].lower()
+    for cls, key in options.items():
+        if not cls or cls == PRIMARY_ACCESSOR_CLASS:
+            continue
+        hint = cls[len("Hoodie"):] if cls.startswith("Hoodie") else cls
+        if hint.lower() in receiver:
+            return key
+    return default
+
+
 def collect_accessors(repo_root, constant_index):
     """Pass 2. accessor method name -> set of config keys it reads.
 
@@ -1342,6 +1367,7 @@ def collect_accessors(repo_root, constant_index):
     one config constant, so that a call site of the method is unambiguous.
     """
     accessors = defaultdict(set)
+    by_class = defaultdict(dict)
     accessor_sites = {}
     for file_path in walk_source_files(repo_root, (".java",)):
         if SOURCE_DIR_MARKER not in file_path:
@@ -1384,11 +1410,28 @@ def collect_accessors(repo_root, constant_index):
                                 break
                             better = candidate_key
                 accessors[name].add(better or only)
+                by_class[name][owner_class] = better or only
                 accessor_sites.setdefault(name, (owner_class, os.path.relpath(file_path, repo_root), sig_line))
     # An accessor name that maps to more than one key across classes is
-    # ambiguous at a call site; drop it rather than mis-attribute.
-    return ({name: next(iter(keys)) for name, keys in accessors.items() if len(keys) == 1},
-            accessor_sites)
+    # ambiguous at a call site. Dropping it lost getWriteConcurrencyMode,
+    # getIndexType, getTableType and getRecordMergeMode -- HoodieMetadataConfig
+    # or HoodieTableConfig defines a same-named method for its own key -- and
+    # with them every gate written against those. HoodieWriteConfig is the
+    # receiver at nearly every call site, so its mapping is the default, and
+    # AMBIGUOUS_ACCESSORS lets a call site whose receiver names another config
+    # class (`tableConfig.getTableType()`) pick that one instead.
+    resolved = {}
+    AMBIGUOUS_ACCESSORS.clear()
+    for name, keys in accessors.items():
+        if len(keys) == 1:
+            resolved[name] = next(iter(keys))
+        elif PRIMARY_ACCESSOR_CLASS in by_class[name]:
+            resolved[name] = by_class[name][PRIMARY_ACCESSOR_CLASS]
+            AMBIGUOUS_ACCESSORS[name] = dict(by_class[name])
+            sites = accessor_sites.get(name)
+            if sites and sites[0] != PRIMARY_ACCESSOR_CLASS:
+                accessor_sites[name] = (PRIMARY_ACCESSOR_CLASS,) + sites[1:]
+    return resolved, accessor_sites
 
 
 SHORT_CIRCUIT_HEURISTIC = (
@@ -2236,14 +2279,18 @@ def _identifier_to_key(match, owner_class, constant_index, unambiguous_bare, acc
         # `config.getInlineCompactDeltaCommitMax()` -- the receiver is a value,
         # so only the method name carries the attribution.
         if second in accessors:
-            return accessors[second], "accessor:" + second
+            key = accessor_key_for_receiver(
+                second, match.string[max(0, match.start() - 60):match.end(1)], accessors[second])
+            return key, "accessor:" + second
         if _looks_like_constant(second):
             key = unambiguous_bare.get(second)
             if key:
                 return key, "constant"
         return None, None
     if first in accessors:
-        return accessors[first], "accessor:" + first
+        key = accessor_key_for_receiver(
+            first, match.string[max(0, match.start() - 60):match.start()], accessors[first])
+        return key, "accessor:" + first
     if _looks_like_constant(first):
         # `import static ...HoodieErrorTableConfig.ERROR_TABLE_ENABLED;` qualifies a
         # bare name that is ambiguous across config classes.
@@ -2673,7 +2720,7 @@ CHECK_CALL_RE = re.compile(r"\b(?:ValidationUtils\s*\.\s*|Preconditions\s*\.\s*)
 THROW_RE = re.compile(r"\bthrow\s+new\s+([A-Z]\w*(?:Exception|Error))\s*\(")
 WARN_RE = re.compile(r"\b(?:log|LOG|logger|LOGGER)\s*\.\s*warn\s*\(")
 CONFIG_KEY_IN_TEXT_RE = re.compile(r"\bhoodie\.[a-z0-9_.\-]+[a-z0-9_]")
-MAX_VALIDATIONS = 8
+MAX_VALIDATIONS = 10
 
 
 def _message_text(arg, text_with_strings):

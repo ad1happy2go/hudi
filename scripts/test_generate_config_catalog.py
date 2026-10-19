@@ -154,6 +154,12 @@ class Relationships(unittest.TestCase):
         self.assertIn("checkArgument", kinds)
         self.assertIn("warn", kinds)
 
+    def test_same_named_accessor_defaults_to_write_config(self):
+        # HoodieMetadataConfig also declares getWriteConcurrencyMode(); the
+        # HoodieWriteConfig mapping must still attribute NBCC's requirements.
+        messages = " ".join(v["message"] for v in entry("hoodie.write.concurrency.mode")["validations"])
+        self.assertIn("MOR table with simple bucket index", messages)
+
     def test_silent_override_is_recorded(self):
         overrides = entry("hoodie.write.lock.provider")["overriddenBy"]
         self.assertTrue(any("InProcessLockProvider" in o["value"] for o in overrides))
