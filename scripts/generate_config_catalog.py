@@ -1856,6 +1856,82 @@ def enclosing_gates(masked, body_start, site_index):
     return gates[-MAX_GATES_PER_SITE:]
 
 
+_GUARD_CACHE = {}
+
+
+def _method_guards(masked, lo, hi):
+    """Per method, once: [(if_start, depth, after_index, guard_text)] for every
+    `if` whose block (or brace-less statement) only exits, plus the depth array."""
+    cache_key = (id(masked), lo, hi)
+    cached = _GUARD_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    depth_at = []
+    depth = 0
+    for i in range(lo, hi):
+        depth_at.append(depth)
+        ch = masked[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+    guards = []
+    for match in IF_RE.finditer(masked, lo, hi):
+        condition, after = extract_call_args(masked, match.end() - 1)
+        if condition is None:
+            continue
+        brace = masked.find("{", after, hi)
+        if brace >= 0 and not masked[after:brace].strip():
+            d, end = 0, -1
+            for i in range(brace, hi):
+                if masked[i] == "{":
+                    d += 1
+                elif masked[i] == "}":
+                    d -= 1
+                    if d == 0:
+                        end = i
+                        break
+            if end < 0:
+                continue
+            block = masked[brace + 1:end]
+            if not re.search(r"\b(?:return|throw)\b[^;]*;\s*$", block.strip() + "\n"):
+                continue
+            if re.match(r"\s*else\b", masked[end + 1:end + 12]):
+                continue
+            exit_end = end
+        else:
+            stmt_end = masked.find(";", after, hi)
+            if stmt_end < 0 or not re.match(r"\s*(?:return|throw)\b", masked[after:stmt_end]):
+                continue
+            exit_end = stmt_end
+        text = summarize_condition(condition)
+        if CONDITION_NOISE_RE.match(text):
+            continue
+        guards.append((match.start(), depth_at[match.start() - lo], exit_end, "unless (%s)" % text))
+    if len(_GUARD_CACHE) > 4096:
+        _GUARD_CACHE.clear()
+    _GUARD_CACHE[cache_key] = (depth_at, guards)
+    return depth_at, guards
+
+
+def guard_clauses(masked, lo, hi, site_index, limit=2):
+    """Early exits before a read at the same block depth: ``if (c) { return x; }``.
+
+    The read only happens when ``c`` is false, so it is recorded as
+    ``unless (c)``. KeyGenUtils.encodeSingleKeyFieldNameForComplexKeyGen returns
+    early whenever the table records its key encoding, which is what makes
+    hoodie.write.complex.keygen.new.encoding inert on any table that has it.
+    """
+    depth_at, guards = _method_guards(masked, lo, hi)
+    if site_index - lo >= len(depth_at):
+        return []
+    site_depth = depth_at[site_index - lo]
+    found = [text for start, depth, exit_end, text in guards
+             if start < site_index and exit_end < site_index and depth == site_depth
+             and min(depth_at[exit_end - lo:site_index - lo] or [site_depth]) >= site_depth]
+    return found[-limit:]
+
+
 def conjunction_gate(masked, lo, hi, site_index):
     """The boolean expression a read is combined into, when it has `&&` / `||`.
 
@@ -2065,6 +2141,9 @@ def collect_read_sites(repo_root, constant_index, accessors, config_keys, verbos
                 conj = conjunction_gate(masked, body_start, body_end, absolute_index)
                 if conj and conj not in gates:
                     gates.append(conj)
+                for guard in guard_clauses(masked, body_start, body_end, absolute_index):
+                    if guard not in gates:
+                        gates.append(guard)
 
                 bucket["readSites"].append(OrderedDict([
                     ("class", owner_class),
