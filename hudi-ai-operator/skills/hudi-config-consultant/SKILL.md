@@ -111,6 +111,16 @@ that was right. A plausible-looking invented key is
 the one failure mode that costs the user a production incident, because it will be accepted
 silently by every Hudi writer — unknown properties are not rejected.
 
+**A key with an uppercase letter is a trap on Spark.** Fifteen keys have one
+(`hoodie.datasource.streaming.startOffset`, `hoodie.streamer.source.kafka.minPartitions`, and
+`hoodie.datasource.meta.sync.glue.catalogId` before it gained the lowercase `catalog_id`).
+Spark's `DataFrameWriter`/`DataStreamWriter` options are a case-insensitive map whose iteration
+lowercases every key, so a mixed-case key set through `.option()` arrives lowercased. It is found
+only if the reader looks it up case-insensitively, or if the config has an all-lowercase key or
+alternative. When the user sets one through `.option()` and it "does nothing", say this first,
+and prefer an all-lowercase key from `key` or `alternatives` when one exists. Properties files
+and Hudi Streamer `--hoodie-conf` keep case.
+
 ## Step 1b — if the config has `engineDefaults`, the declared default is the wrong answer
 
 Some configs have a different effective default per engine. The builder overrides the declared
@@ -293,8 +303,8 @@ Work this order and stop at the first hit:
    charge of this key, and the `hoodie.*` value they set may never be what the job reads. Name the
    Flink option and its default. This is the most common cause of "I set it on Flink and nothing
    happened", and nothing else in the ladder will find it.
-1. **Did Hudi override it?** A `warn` in `validations` whose message says it is adjusting or
-   overriding the value (the archiver raising `hoodie.keep.min.commits`, the single-writer lock
+1. **Did Hudi override it?** An `overriddenBy` entry whose `when` matches their setup, or a
+   `warn` in `validations` whose message says it is adjusting or overriding the value (the archiver raising `hoodie.keep.min.commits`, the single-writer lock
    override) explains "I set it and it did nothing" outright, and the user's log has the line.
 2. **Is the read gated?** `gatingConditions` — a read under a `switch` on a strategy enum, or an
    `if` on another config, is usually the answer.

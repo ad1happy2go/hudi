@@ -2535,6 +2535,100 @@ def collect_flink_mappings(repo_root, constant_index):
 
 
 # --------------------------------------------------------------------------
+# Pass 10: places Hudi overwrites a value the user may have set
+# --------------------------------------------------------------------------
+
+OVERRIDE_CALL_RE = re.compile(
+    r"\b(?:setValue|setProperty|put|putIfAbsent)\s*\(\s*"
+    r"(?P<const>(?:[A-Za-z_$][\w$]*\s*\.\s*)*[A-Z][A-Z0-9_]*)(?:\s*\.\s*key\s*\(\s*\))?\s*,")
+MAX_OVERRIDES = 6
+
+
+def collect_overrides(repo_root, constant_index, accessors):
+    """key -> [{at, value, when}] for writes that replace a configured value.
+
+    ``setDefaultValue`` only fills an unset key and is excluded; a builder
+    setter that stores its own parameter is the user setting the value and is
+    excluded too. What is left is Hudi deciding for the user:
+    ``writeConfig.setValue(FAILED_WRITES_CLEANER_POLICY.key(), LAZY.name())``
+    under ``if (writeConcurrencyMode.supportsMultiWriter())``.
+    """
+    result = defaultdict(list)
+    for file_path in walk_source_files(repo_root, (".java",)):
+        if SOURCE_DIR_MARKER not in file_path:
+            continue
+        if module_of(os.path.relpath(file_path, repo_root)) in SAMPLE_MODULES:
+            continue
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="replace") as handle:
+                original = handle.read()
+        except OSError:
+            continue
+        if "setValue" not in original and "setProperty" not in original and ".put(" not in original:
+            continue
+        masked = strip_comments_and_strings(original)
+        with_strings = strip_comments_and_strings(original, keep_string_bodies=True)
+        class_match = CLASS_DECL_RE.search(masked)
+        owner = class_match.group(1) if class_match else None
+        # Upgrade/downgrade handlers configure their own internal write clients;
+        # that is not Hudi overriding a user's setting.
+        if owner and re.search(r"Upgrade|Downgrade", owner):
+            continue
+        imports = static_imports(original)
+        relative = os.path.relpath(file_path, repo_root)
+        for name, body_start, body_end, line in find_method_bodies(masked, original):
+            sig_open = masked.rfind("(", 0, body_start)
+            sig_close = masked.rfind(")", 0, body_start)
+            params = [p.strip().split()[-1] for p in
+                      split_top_level_args(masked[sig_open + 1:sig_close]) if p.strip()]
+            for call in OVERRIDE_CALL_RE.finditer(masked, body_start, body_end):
+                const_expr = re.sub(r"\s+", "", call.group("const"))
+                # `json.put(TYPE, RECORD)` is a map write, not a config: a bare name
+                # counts only when this file declares or statically imports it.
+                if "." not in const_expr and (owner, const_expr) not in constant_index \
+                        and const_expr not in imports and not imports.get("*"):
+                    continue
+                key = resolve_constant(const_expr, owner, constant_index, imports)
+                if not key:
+                    continue
+                args_text, _ = extract_call_args(with_strings, with_strings.find("(", call.start()))
+                args = split_top_level_args(args_text or "")
+                value = " ".join(args[1].split()) if len(args) > 1 else ""
+                # The user's own value flowing through (a setter's parameter, or a
+                # copy of the same key from another config) is not an override.
+                if any(re.search(r"\b%s\b" % re.escape(p), value) for p in params):
+                    continue
+                if re.search(r"\bget\w*\(\s*%s\b" % re.escape(call.group("const").split(".")[-1]), value):
+                    continue
+                if any(accessors.get(m) == key for m in re.findall(r"\b([a-z]\w*)\s*\(", value)):
+                    continue
+                if not value or value in ('""', "null"):
+                    continue
+                # Only a value Hudi decides -- a literal, a constant, an enum, a class
+                # literal -- is an override. A local or field (`databaseName`,
+                # `tableType.name()`) is the user's input being propagated.
+                if not re.search(r'"[^"]*"|\b\d+\b|\btrue\b|\bfalse\b|\b[A-Z][A-Z0-9_]{2,}\b|\.class\b', value):
+                    continue
+                gates = enclosing_gates(masked, body_start, call.start())
+                for guard in guard_clauses(masked, body_start, body_end, call.start()):
+                    gates.append(guard)
+                if not gates and name in ("build", "setDefaults"):
+                    # An unconditional write in build() is a fixed setting, still
+                    # an override, but say so without inventing a condition.
+                    pass
+                record = OrderedDict([
+                    ("value", summarize_condition(value)),
+                    ("at", "%s.%s (%s:%d)" % (owner or "?", name, relative,
+                                              line_of(original, call.start()))),
+                ])
+                if gates:
+                    record["when"] = gates[-3:]
+                if len(result[key]) < MAX_OVERRIDES and record not in result[key]:
+                    result[key].append(record)
+    return result
+
+
+# --------------------------------------------------------------------------
 # Pass 9: validations that reject a configuration
 # --------------------------------------------------------------------------
 
@@ -3265,6 +3359,7 @@ def build_catalog(repo_root, verbose=False):
 
     known_implementations = collect_known_implementations(
         entries, collect_type_hierarchy(repo_root))
+    overrides = collect_overrides(repo_root, constant_index, accessors)
     validations = collect_validations(repo_root, constant_index, accessors,
                                       {e["key"] for e in entries if e.get("key")})
     string_constants = collect_string_constants(repo_root)
@@ -3374,6 +3469,8 @@ def build_catalog(repo_root, verbose=False):
         # Checks that reject a configuration naming this key. These are the
         # enforced constraints -- a write fails -- as opposed to co-occurrence.
         entry["validations"] = validations.get(key, [])
+        # Places Hudi writes this key itself, replacing what the user set.
+        entry["overriddenBy"] = overrides.get(key, [])
         # A computed default is a source expression nobody can paste into a config
         # file. Evaluate the shapes that can be evaluated without running Java.
         if entry.get("hasDefaultValue") and not entry.get("defaultValueIsLiteral"):
@@ -3517,6 +3614,7 @@ def build_catalog(repo_root, verbose=False):
         entry["knownImplementations"] = None
         entry["inferredFrom"] = None
         entry["validations"] = []
+        entry["overriddenBy"] = []
         configs.append(entry)
 
     stats = {
@@ -3536,6 +3634,7 @@ def build_catalog(repo_root, verbose=False):
         "configsWithFlinkOptions": sum(1 for c in configs if c.get("flinkOptions")),
         "configsWithKnownImplementations": sum(1 for c in configs if c.get("knownImplementations")),
         "configsWithValidations": sum(1 for c in configs if c.get("validations")),
+        "configsWithOverrides": sum(1 for c in configs if c.get("overriddenBy")),
         "configsWithConfigDependentDefaults": sum(
             1 for record in engine_defaults.values()
             if record.get("defaultIsConfigDependent")),
@@ -3714,6 +3813,8 @@ def main(argv=None):
           % stats["configsWithKnownImplementations"])
     print("Validations       : %d configs named by a check that rejects a configuration"
           % stats["configsWithValidations"])
+    print("Overrides         : %d configs Hudi itself overwrites somewhere"
+          % stats["configsWithOverrides"])
     print("Aliases resolved  : %d (unresolved %d)"
           % (stats["aliasesResolved"], stats["aliasesUnresolved"]))
     print("Accessors         : %d" % stats["accessorsResolved"])
