@@ -400,11 +400,17 @@ does nothing, and you get no warning"** — two hops past where the catalog stop
 `if`/`switch` blocks enclosing a read and records their conditions as strings. Each entry carries
 the `class.method (file:line)` it came from.
 
-What it catches well:
+What it catches well, by the prefix of the recorded condition:
 
 - `switch (strategy) case NUM_COMMITS` — a config that applies only under certain enum values.
-- `if (config.isSomethingEnabled())` — a read behind a feature flag.
+- `if (config.isSomethingEnabled())` — a read behind a feature flag, including brace-less
+  `if (c) return x;`.
 - A value read into a local and then used inside a branch, which is the common Hudi shape.
+- `when (a && !b && c)` — the read is one operand of a boolean expression, so it only matters when
+  the others hold. `asyncClusteringTriggerFnDefined && !inlineClusteringEnabled &&
+  isAsyncClusteringEnabled` is how inline clustering wins over async on the Spark write path.
+- `unless (c)` — a guard clause earlier in the method returns or throws when `c` holds, so the
+  read is reached only when it does not. Read it as "inert whenever `c`".
 
 What it misses or gets wrong:
 
@@ -420,14 +426,15 @@ What it misses or gets wrong:
   not a literal zero. The read site looks unconditional and `gates: []` is reported with
   `gatesResolved: true`. Whenever a numeric config's default is `0` or `-1`, assume a sentinel and
   open the method it is passed to before describing the default.
-- Early returns and guard clauses, which gate without an enclosing block.
+- Guard clauses in a nested block, or more than two levels back; only same-depth early exits
+  become `unless`.
 - Conditions on local variables whose own derivation is the real gate (`if (compactable)` tells you
   nothing on its own).
-- Scala read sites have no gating at all; the generator does not parse Scala method bodies. A site
-  with `"via": "scalaReference"` carries `gatesResolved: false`, and the config carries
-  `readContextResolved: false` with a `readContextNote` saying how many of its sites are Scala.
-  For `hoodie.datasource.*` configs most or all read sites are Scala, so an empty
-  `gatingConditions` there means **not analysed**, not **unconditional**. Say which it is.
+- Scala gating is shallower: a Scala site (`"via": "scalaReference"`) gets `if` and `when` gates
+  but not `match` arms or guards. A Scala site with no enclosing `def` found carries
+  `gatesResolved: false`, and the config `readContextResolved: false` with a `readContextNote`.
+  For those, an empty `gatingConditions` means **not analysed**, not **unconditional**. Say which
+  it is.
 
 So: present gates as **evidence to check**, with the `file:line`, never as a verdict. "This is read
 inside `switch (compactionTriggerStrategy)` under `NUM_COMMITS`, `NUM_COMMITS_AFTER_LAST_REQUEST`,
