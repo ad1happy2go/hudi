@@ -1,7 +1,7 @@
 {
   "schemaVersion": 4,
   "hudiVersion": "1.3.0-SNAPSHOT",
-  "generatedFrom": "2e30c473c27540add3ca0fad291ebc9d01bd969b",
+  "generatedFrom": "2e50f5c4bfa0cfb9b2c41ab2871f4562fdd0f8e9",
   "configs": [
     {
       "key": "_.hoodie.allow.multi.write.on.same.instant",
@@ -45108,7 +45108,7 @@
       "deprecatedAfter": null,
       "supportedVersions": [],
       "advanced": true,
-      "hasInferFunction": false,
+      "hasInferFunction": true,
       "builderSteps": [
         "key",
         "noDefaultValue",
@@ -45184,7 +45184,18 @@
         }
       ],
       "overriddenBy": [],
-      "inferredFrom": null,
+      "inferredFrom": {
+        "at": "DataSourceWriteOptions (hudi-spark-datasource/hudi-spark-common/src/main/scala/org/apache/hudi/DataSourceOptions.scala:545)",
+        "reads": [
+          "hoodie.datasource.write.partitionpath.field",
+          "hoodie.datasource.write.recordkey.field",
+          "hoodie.table.recordkey.fields"
+        ],
+        "viaHelpers": [
+          "HoodieSparkKeyGeneratorFactory.inferKeyGeneratorTypeFromWriteConfig (hudi-client/hudi-spark-client/src/main/java/org/apache/hudi/keygen/factory/HoodieSparkKeyGeneratorFactory.java:170)",
+          "KeyGenUtils.inferKeyGeneratorType (hudi-client/hudi-client-common/src/main/java/org/apache/hudi/keygen/KeyGenUtils.java:105)"
+        ]
+      },
       "callSiteDefaults": [],
       "flinkOptions": [],
       "readSites": [

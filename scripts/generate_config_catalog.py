@@ -3481,7 +3481,12 @@ def build_catalog(repo_root, verbose=False):
                 entry["resolvedDefaultHow"] = how
         # What an unset value is inferred from. `reads` names the configs the
         # infer function (and up to two hops of helpers) consults.
-        entry["inferredFrom"] = infer_sources.get(key) if entry.get("hasInferFunction") else None
+        # The same key may be declared twice (Java and Scala) and only one of the
+        # declarations carry the infer function; the merge above can keep the
+        # other, so key the lookup by config, not by surviving declaration.
+        entry["inferredFrom"] = infer_sources.get(key)
+        if entry["inferredFrom"]:
+            entry["hasInferFunction"] = True
 
         # A literal fallback at the read beats the declaration on that code path.
         # Only the disagreeing ones are worth a reader's attention.
