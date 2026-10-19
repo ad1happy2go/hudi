@@ -72,6 +72,11 @@ the commit it came from, and the Skill reports that commit in every answer.
 `--repo-root` scans a different checkout; `--out-dir` writes elsewhere; `--verbose` reports each
 pass on stderr.
 
+`python3 scripts/test_generate_config_catalog.py` rebuilds the catalog and checks the facts the
+Skill leans on hardest — effective defaults per engine and per code path, Flink options, guard and
+conjunction gates, validations and overrides — each verified by hand against the source. Run it
+after changing the generator.
+
 ## What the generator extracts
 
 Declarations come from `ConfigProperty` builder chains (and Flink `ConfigOptions` chains that name
@@ -100,16 +105,19 @@ constant, attributed to its enclosing method.
   read. It does not see conditions in callers, guard clauses with early returns, or the derivation
   of a local that a branch tests. Treat a gate as evidence to open the file and check, never as a
   verdict. The Skill is written to present it that way.
-- **Scala read sites carry no method or gating.** Scala *declarations* are extracted in full (key,
-  default, documentation, valid values, alternatives, since/deprecated). Scala *read sites* are
-  not: the generator parses Java method bodies only, so a Scala reference is recorded at file and
-  line with no enclosing method, no co-configs and no gating. Those sites carry
-  `gatesResolved: false`, and the config carries `readContextResolved: false` with a
-  `readContextNote`. For a `hoodie.datasource.*` config an empty `gatingConditions` therefore means
-  *not analysed*, not *unconditional*.
+- **Scala read context is shallower than Java's.** A Scala read site gets its enclosing `def`
+  from an indentation-based span finder, and its gates from `if` blocks and `&&`/`||`
+  conjunctions; `match` arms and guards are not parsed. A site with no enclosing `def` carries
+  `gatesResolved: false`, and the config `readContextResolved: false` with a `readContextNote`.
 - **Engine defaults cover the `setDefaultValue(PROP, helper(engineType))` shape only.** A default
   overridden some other way — an infer function, or a caller passing an explicit value — is not
   reported as an engine default.
+- **Flink options are recorded only where they stand in for a `hoodie.*` key** (`flinkOptions`):
+  through `withFallbackKeys`, or a Flink write-client builder copying them in. The rest of
+  `FlinkOptions` is not catalogued.
+- **Validations and overrides are textual too.** A check is attached to a config its condition,
+  enclosing `if` or message names; an override is a `setValue` whose value Hudi decides. Both point
+  at the line to open, not a verdict.
 - **Read sites are capped at 20 per config**, co-configs at 25. A config at the cap has more
   consumers than the catalog lists.
 - **Co-configs are co-occurrence, not dependency.** They tell you what the code reads together,
