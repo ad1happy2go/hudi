@@ -109,6 +109,10 @@ class ReadContext(unittest.TestCase):
         self.assertTrue(any("inlineClusteringEnabled" in g and "isAsyncClusteringEnabled" in g
                             for g in gates("hoodie.clustering.async.enabled")))
 
+    def test_scala_match_arm_gate(self):
+        self.assertTrue(any(g.startswith("match (queryType) case")
+                            for g in gates("hoodie.datasource.query.type")))
+
     def test_guard_clause_gate(self):
         # Inert once the table records its key encoding.
         self.assertIn("unless (!StringUtils.isNullOrEmpty(tableEncoding))",

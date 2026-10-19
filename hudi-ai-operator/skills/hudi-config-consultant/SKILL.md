@@ -430,8 +430,10 @@ What it misses or gets wrong:
   become `unless`.
 - Conditions on local variables whose own derivation is the real gate (`if (compactable)` tells you
   nothing on its own).
-- Scala gating is shallower: a Scala site (`"via": "scalaReference"`) gets `if` and `when` gates
-  but not `match` arms or guards. A Scala site with no enclosing `def` found carries
+- `match (x) case P` — a Scala read inside one arm of a pattern match (`case _` arms are not
+  recorded).
+- Scala gating is shallower: a Scala site (`"via": "scalaReference"`) gets `if`, `when` and
+  `match` gates, but not guards in for-comprehensions or conditions on implicit parameters. A Scala site with no enclosing `def` found carries
   `gatesResolved: false`, and the config `readContextResolved: false` with a `readContextNote`.
   For those, an empty `gatingConditions` means **not analysed**, not **unconditional**. Say which
   it is.

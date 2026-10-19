@@ -107,7 +107,7 @@ constant, attributed to its enclosing method.
   verdict. The Skill is written to present it that way.
 - **Scala read context is shallower than Java's.** A Scala read site gets its enclosing `def`
   from an indentation-based span finder, and its gates from `if` blocks and `&&`/`||`
-  conjunctions; `match` arms and guards are not parsed. A site with no enclosing `def` carries
+  conjunctions and `match` arms; guards in for-comprehensions are not parsed. A site with no enclosing `def` carries
   `gatesResolved: false`, and the config `readContextResolved: false` with a `readContextNote`.
 - **Engine defaults cover the `setDefaultValue(PROP, helper(engineType))` shape only.** A default
   overridden some other way — an infer function, or a caller passing an explicit value — is not

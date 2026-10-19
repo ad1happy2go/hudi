@@ -2019,6 +2019,55 @@ def conjunction_gate(masked, lo, hi, site_index):
     return "when (%s)" % summarize_condition(text.strip().rstrip("{;").strip())
 
 
+SCALA_MATCH_RE = re.compile(r"\bmatch\s*\{")
+SCALA_CASE_RE = re.compile(r"\bcase\b([^\n]*?)=>")
+
+
+def scala_match_gates(masked, lo, site_index, limit=2):
+    """`x match { case Some(v) => <read> }` -> "match (x) case Some(v)".
+
+    The scrutinee is the expression on the line before `match`; the arm is the
+    last `case ... =>` at the block's top level before the site.
+    """
+    gates = []
+    for match in SCALA_MATCH_RE.finditer(masked, lo, site_index):
+        brace = match.end() - 1
+        depth, end = 0, -1
+        for i in range(brace, min(len(masked), brace + 20000)):
+            if masked[i] == "{":
+                depth += 1
+            elif masked[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+        if end < 0 or not (brace < site_index < end):
+            continue
+        line_start = masked.rfind("\n", lo, match.start()) + 1
+        scrutinee = masked[line_start:match.start()].strip()
+        scrutinee = re.sub(r"^(?:val|var|lazy val)\s+\w+\s*(?::[^=]+)?=\s*", "", scrutinee)
+        label = None
+        depth = 0
+        i = brace
+        while i < site_index:
+            ch = masked[i]
+            if ch in "{(":
+                depth += 1
+            elif ch in "})":
+                depth -= 1
+            elif depth == 1 and masked.startswith("case", i) and \
+                    (i == 0 or not (masked[i - 1].isalnum() or masked[i - 1] == "_")):
+                arrow = masked.find("=>", i)
+                if 0 < arrow < site_index:
+                    label = " ".join(masked[i + 4:arrow].split())
+                    i = arrow + 1
+            i += 1
+        # `case _` is the fallthrough arm: no condition worth recording.
+        if label and scrutinee and label != "_":
+            gates.append("match (%s) case %s" % (summarize_condition(scrutinee), summarize_condition(label)))
+    return gates[-limit:]
+
+
 SCALA_DEF_RE = re.compile(r"^(?P<indent>[ \t]*)(?:(?:private|protected|override|final|implicit|lazy)(?:\[[^\]]*\])?\s+)*def\s+(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)", re.M)
 
 
@@ -2108,6 +2157,7 @@ def collect_read_sites(repo_root, constant_index, accessors, config_keys, verbos
                                 conj = conjunction_gate(masked, lo, hi, index)
                                 if conj:
                                     extra.append(conj)
+                                extra += scala_match_gates(masked, lo, index)
                                 for gate in extra:
                                     if gate not in site["gates"] and \
                                             len(site["gates"]) < MAX_GATES_PER_SITE * 2:
@@ -2125,6 +2175,10 @@ def collect_read_sites(repo_root, constant_index, accessors, config_keys, verbos
                     conj = conjunction_gate(masked, lo, hi, index) if enclosing else None
                     if conj and conj not in gates:
                         gates.append(conj)
+                    if enclosing:
+                        for arm in scala_match_gates(masked, lo, index):
+                            if arm not in gates:
+                                gates.append(arm)
                     bucket["readSites"].append(OrderedDict([
                         ("class", owner_class),
                         ("method", enclosing[0] if enclosing else None),
@@ -3678,7 +3732,7 @@ def build_catalog(repo_root, verbose=False):
             entry["readContextNote"] = (
                 "%d of %d recorded read sites are in Scala (%d with no enclosing def found). "
                 "Scala gating is shallower than Java's: `if` blocks and `&&`/`||` "
-                "conjunctions are recovered, `match` arms and guards are not. Absence of a "
+                "conjunctions and `match` arms are recovered, for-comprehension guards are not. Absence of a "
                 "gate at a Scala site is weak evidence; check the cited line."
                 % (scala_sites, len(entry["readSites"]), unresolved))
         entry["gatingHeuristic"] = (
