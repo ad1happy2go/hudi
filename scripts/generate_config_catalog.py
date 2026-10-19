@@ -2120,7 +2120,7 @@ def collect_read_sites(repo_root, constant_index, accessors, config_keys, verbos
             # A Scala mention gets its enclosing def from an indentation-based
             # span finder, and its gates from the same textual `if` matcher the
             # Java pass uses plus boolean conjunctions. That is shallower than
-            # the Java pass -- no `match` arms, no guards in for-comprehensions
+            # the Java pass -- `match` arms are recovered, for-comprehension guards are not
             # -- so the site stays marked `via: scalaReference` and
             # `gatesResolved` says whether a method was found at all.
             spans = list(find_scala_method_spans(masked, original))
