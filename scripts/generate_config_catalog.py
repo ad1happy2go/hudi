@@ -2096,6 +2096,9 @@ def collect_read_sites(repo_root, constant_index, accessors, config_keys, verbos
             continue
 
         declaring_file = relative
+        file_imports = static_imports(original)
+        with_strings = strip_comments_and_strings(original, keep_string_bodies=True) \
+            if '"hoodie.' in original else None
 
         for method_name, body_start, body_end, sig_line in find_method_bodies(masked, original):
             body = masked[body_start:body_end]
@@ -2103,9 +2106,16 @@ def collect_read_sites(repo_root, constant_index, accessors, config_keys, verbos
             hits = []
             for match in IDENTIFIER_RE.finditer(body):
                 key, via = _identifier_to_key(match, owner_class, constant_index,
-                                              unambiguous_bare, accessors)
+                                              unambiguous_bare, accessors, file_imports)
                 if key and key in config_keys:
                     hits.append((key, body_start + match.start(), via))
+            # `props.getBoolean("hoodie.write.track.event.time.watermark", false)`:
+            # a key spelled as a literal is a read the identifier scan cannot see.
+            if with_strings is not None:
+                for match in re.finditer(r'"(hoodie\.[A-Za-z0-9_.\-]+)"', with_strings[body_start:body_end]):
+                    if match.group(1) in config_keys:
+                        hits.append((match.group(1), body_start + match.start(), "literalKey"))
+                hits.sort(key=lambda hit: hit[1])
             if not hits:
                 continue
 
@@ -2136,6 +2146,9 @@ def collect_read_sites(repo_root, constant_index, accessors, config_keys, verbos
                 # Reading the declaration itself is not a read site.
                 if declaring_file.endswith(".java") and via == "constant" \
                         and _is_declaration_site(masked, absolute_index):
+                    continue
+                if via == "literalKey" and re.search(r"\.\s*key\s*\(\s*$",
+                                                     masked[max(0, absolute_index - 20):absolute_index]):
                     continue
 
                 gates = list(enclosing_gates(masked, body_start, absolute_index))
@@ -2204,13 +2217,17 @@ def _is_declaration_site(masked, index):
     return "ConfigProperty" in line and "=" in line
 
 
-def _identifier_to_key(match, owner_class, constant_index, unambiguous_bare, accessors):
+def _identifier_to_key(match, owner_class, constant_index, unambiguous_bare, accessors,
+                       imports=None):
     """Map one identifier occurrence to a config key, or None.
 
     Returns (key, via). ``via`` records how the attribution was made so a reader
     can tell a direct constant reference from a call through an accessor.
     """
     first, second = match.group(1), match.group(2)
+    if second == "key" and _looks_like_constant(first):
+        # `ERROR_TABLE_ENABLED.key()` on a bare (often statically imported) constant.
+        second = None
     if second:
         # `HoodieCompactionConfig.INLINE_COMPACT_NUM_DELTA_COMMITS`
         key = constant_index.get((first, second))
@@ -2228,6 +2245,16 @@ def _identifier_to_key(match, owner_class, constant_index, unambiguous_bare, acc
     if first in accessors:
         return accessors[first], "accessor:" + first
     if _looks_like_constant(first):
+        # `import static ...HoodieErrorTableConfig.ERROR_TABLE_ENABLED;` qualifies a
+        # bare name that is ambiguous across config classes.
+        if imports and first in imports:
+            key = constant_index.get((imports[first], first))
+            if key:
+                return key, "constant"
+        if owner_class:
+            key = constant_index.get((owner_class, first))
+            if key:
+                return key, "constant"
         key = unambiguous_bare.get(first)
         if key:
             return key, "constant"
@@ -2249,6 +2276,10 @@ def _looks_like_constant(name):
 # path: hoodie.datasource.read.incr.fallback.fulltablescan.enable declares
 # "true", and the V1 incremental relations that serve tables below version 8
 # read it with "false".
+LITERAL_KEY_DEFAULT_RE = re.compile(
+    r"\.\s*(?:getOrElse|getOrDefault|getProperty|getBoolean|getInteger|getInt|getLong|getString|"
+    r"getDouble|getFloat)\s*\(\s*\"(?P<key>hoodie\.[A-Za-z0-9_.\-]+)\"\s*,\s*"
+    r"(?P<arg>\"(?:[^\"\\]|\\.)*\"|true|false|-?\d+(?:\.\d+)?[LlDdFf]?)\s*\)")
 CALL_SITE_DEFAULT_RE = re.compile(
     r"\.\s*(?P<call>getOrElse|getOrDefault|getProperty|getBoolean|getInteger|getInt|getLong|"
     r"getString|getDouble|getFloat|getBooleanOrDefault|getIntOrDefault|getLongOrDefault|"
@@ -2294,6 +2325,12 @@ def collect_call_site_defaults(repo_root, constant_index):
         owner_class = class_match.group(1) if class_match else None
         relative = os.path.relpath(file_path, repo_root)
         file_imports = static_imports(original)
+        for match in LITERAL_KEY_DEFAULT_RE.finditer(text):
+            found[match.group("key")].append(OrderedDict([
+                ("value", match.group("arg").strip('"')),
+                ("at", "%s (%s:%d)" % (owner_class or "?", relative,
+                                       line_of(original, match.start()))),
+            ]))
         for match in CALL_SITE_DEFAULT_RE.finditer(text):
             const = re.sub(r"\s+", "", match.group("const"))
             key = resolve_constant(const, owner_class, constant_index, file_imports)

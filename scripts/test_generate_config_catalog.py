@@ -117,6 +117,15 @@ class ReadContext(unittest.TestCase):
     def test_commented_out_consumer_is_flagged(self):
         self.assertTrue(entry("hoodie.datasource.read.incr.skip_cluster")["noExternalConsumer"])
 
+    def test_literal_key_read_is_a_read_site(self):
+        # ConfigUtils reads it as props.getBoolean("hoodie.write.track.event.time.watermark", false).
+        self.assertTrue(entry("hoodie.write.track.event.time.watermark")["readSites"])
+
+    def test_statically_imported_constant_is_a_read_site(self):
+        # StreamSync: import static ...HoodieErrorTableConfig.ERROR_TABLE_ENABLED.
+        files = [s["file"] for s in entry("hoodie.errortable.enable")["readSites"]]
+        self.assertTrue(any(f.endswith("StreamSync.java") for f in files))
+
     def test_ambiguous_bare_constant_is_not_misattributed(self):
         sites = [o["at"] for o in entry("hoodie.bootstrap.base.path")["flinkOptions"]]
         self.assertFalse(any("StreamerUtil" in at for at in sites))
