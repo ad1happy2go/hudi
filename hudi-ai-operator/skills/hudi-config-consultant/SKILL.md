@@ -198,8 +198,8 @@ plainly that you are doing so:
 - Then anything deprecated or inert, called out as such — that is often the highest-value line in
   the answer.
 
-`advanced: true` is a ranking signal: a knob for someone who has measured a problem. 834 of the
-989 configs are advanced, so it separates little on its own — use it to demote, not to dismiss.
+`advanced: true` is a ranking signal: a knob for someone who has measured a problem. 835 of the
+990 configs are advanced, so it separates little on its own — use it to demote, not to dismiss.
 
 ### The five question shapes
 

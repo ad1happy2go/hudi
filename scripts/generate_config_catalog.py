@@ -1200,8 +1200,31 @@ def find_method_bodies(masked, original):
         yield match.group("name"), brace_index, end, line_of(original, match.start())
 
 
-def resolve_constant(expr, owner_class, constant_index):
-    """Map a (possibly qualified) constant reference to a config key."""
+STATIC_IMPORT_RE = re.compile(r"^\s*import\s+static\s+[\w.]*?\.([A-Z][\w$]*)\.([A-Z][A-Z0-9_]*)\s*;", re.M)
+LOCAL_CONSTANT_RE = re.compile(r"\bstatic\s+final\s+(?!ConfigProperty\b)[\w<>\[\], ?]+?\s+([A-Z][A-Z0-9_]*)\s*=")
+
+
+def file_scope(original, masked):
+    """What a file says about bare constant names: static imports, and its own
+    non-config constants (JsonToAvroSchemaConverter's `TYPE = "type"` is not
+    HoodieTableConfig.TYPE)."""
+    return {"imports": {m.group(2): m.group(1) for m in STATIC_IMPORT_RE.finditer(original)},
+            "local": set(LOCAL_CONSTANT_RE.findall(masked))}
+
+
+def _is_ambiguous(const, constant_index):
+    return len({key for (qualifier, name), key in constant_index.items()
+                if name == const and qualifier is not None}) > 1
+
+
+def resolve_constant(expr, owner_class, constant_index, scope=None):
+    """Map a (possibly qualified) constant reference to a config key.
+
+    With ``scope`` (from :func:`file_scope`), a bare name is resolved through
+    the file's static imports, a file's own constant shadows it, and a name
+    several config classes declare is refused rather than resolved to
+    whichever class registered last.
+    """
     # `props.getBoolean(ERROR_TABLE_ENABLED.key(), ...)` -- a very common shape,
     # especially in hudi-utilities where configs are read straight off a
     # TypedProperties rather than through a HoodieWriteConfig getter. Without
@@ -1225,6 +1248,14 @@ def resolve_constant(expr, owner_class, constant_index):
         resolved = constant_index.get((owner_class, const))
         if resolved:
             return resolved
+        if scope is not None:
+            imported = scope["imports"].get(const)
+            if imported:
+                return constant_index.get((imported, const))
+            if const in scope["local"]:
+                return None
+    if scope is not None and _is_ambiguous(const, constant_index):
+        return None
     return constant_index.get((None, const))
 
 
@@ -1284,6 +1315,7 @@ def collect_accessors(repo_root, constant_index):
     one config constant, so that a call site of the method is unambiguous.
     """
     accessors = defaultdict(set)
+    by_class = defaultdict(dict)
     accessor_sites = {}
     for file_path in walk_source_files(repo_root, (".java",)):
         if SOURCE_DIR_MARKER not in file_path:
@@ -1300,6 +1332,7 @@ def collect_accessors(repo_root, constant_index):
         class_match = CLASS_DECL_RE.search(masked)
         if class_match:
             owner_class = class_match.group(1)
+        scope = file_scope(original, masked)
 
         for name, body_start, body_end, sig_line in find_method_bodies(masked, original):
             body = masked[body_start:body_end]
@@ -1308,7 +1341,7 @@ def collect_accessors(repo_root, constant_index):
             keys = set()
             for pattern in (GETTER_CALL_RE, ALT_KEYS_CALL_RE):
                 for call in pattern.finditer(body):
-                    key = resolve_constant(call.group("arg"), owner_class, constant_index)
+                    key = resolve_constant(call.group("arg"), owner_class, constant_index, scope)
                     if key:
                         keys.add(key)
             if len(keys) == 1 and name not in GENERIC_METHOD_NAMES:
@@ -1325,11 +1358,43 @@ def collect_accessors(repo_root, constant_index):
                                 break
                             better = candidate_key
                 accessors[name].add(better or only)
+                by_class[name][owner_class] = (better or only,
+                                               (owner_class, os.path.relpath(file_path, repo_root), sig_line))
                 accessor_sites.setdefault(name, (owner_class, os.path.relpath(file_path, repo_root), sig_line))
-    # An accessor name that maps to more than one key across classes is
-    # ambiguous at a call site; drop it rather than mis-attribute.
-    return ({name: next(iter(keys)) for name, keys in accessors.items() if len(keys) == 1},
-            accessor_sites)
+    # A name that maps to several keys is ambiguous at a call site. Dropping it
+    # lost getWriteConcurrencyMode, getIndexType and getTableType, which
+    # HoodieMetadataConfig / HoodieTableConfig also declare for their own keys.
+    # HoodieWriteConfig is the receiver at nearly every call site, so keep its
+    # mapping; drop the name only when HoodieWriteConfig does not declare it.
+    resolved = {}
+    SAME_NAMED_ACCESSORS.clear()
+    for name, keys in accessors.items():
+        if len(keys) == 1:
+            resolved[name] = next(iter(keys))
+            continue
+        SAME_NAMED_ACCESSORS[name] = {cls: key for cls, (key, _) in by_class[name].items() if cls}
+        if "HoodieWriteConfig" in by_class[name]:
+            resolved[name], accessor_sites[name] = by_class[name]["HoodieWriteConfig"]
+    return resolved, accessor_sites
+
+
+# accessor name -> {declaring class: key}, for names several config classes declare.
+SAME_NAMED_ACCESSORS = {}
+
+
+def accessor_for_receiver(name, preceding, default):
+    """`writeConfig.getMetadataConfig().getBloomFilterType()` belongs to
+    HoodieMetadataConfig, `tableConfig.getTableType()` to HoodieTableConfig:
+    pick the class the receiver chain names, else the default."""
+    options = SAME_NAMED_ACCESSORS.get(name)
+    if not options:
+        return default
+    chain = re.search(r"([\w$.]*(?:\([^()]*\)[\w$.]*)*)$", preceding.rstrip(". \n\t"))
+    receiver = (chain.group(1) if chain else "").lower()
+    for cls, key in options.items():
+        if cls != "HoodieWriteConfig" and cls.replace("Hoodie", "", 1).lower() in receiver:
+            return key
+    return default
 
 
 SHORT_CIRCUIT_HEURISTIC = (
@@ -1844,6 +1909,9 @@ def collect_read_sites(repo_root, constant_index, accessors, config_keys, verbos
             continue
 
         declaring_file = relative
+        scope = file_scope(original, masked)
+        literal_text = strip_comments_and_strings(original, keep_string_bodies=True) \
+            if '"hoodie.' in original else None
 
         for method_name, body_start, body_end, sig_line in find_method_bodies(masked, original):
             body = masked[body_start:body_end]
@@ -1851,9 +1919,19 @@ def collect_read_sites(repo_root, constant_index, accessors, config_keys, verbos
             hits = []
             for match in IDENTIFIER_RE.finditer(body):
                 key, via = _identifier_to_key(match, owner_class, constant_index,
-                                              unambiguous_bare, accessors)
+                                              unambiguous_bare, accessors, scope)
                 if key and key in config_keys:
                     hits.append((key, body_start + match.start(), via))
+            # `props.getBoolean("hoodie.write.track.event.time.watermark", false)` reads a
+            # key spelled as a literal; a declaration (`.key("...")`) or a write
+            # (`setProperty("...", v)`) does not.
+            if literal_text is not None:
+                for match in re.finditer(r'"(hoodie\.[\w.\-]+)"', literal_text[body_start:body_end]):
+                    before = literal_text[max(0, body_start + match.start() - 40):body_start + match.start()]
+                    if match.group(1) in config_keys and not re.search(
+                            r"\b(?:key|put|putIfAbsent|setProperty|setValue|setDefaultValue|remove|set)\s*\(\s*$", before):
+                        hits.append((match.group(1), body_start + match.start(), "literalKey"))
+                hits.sort(key=lambda hit: hit[1])
             if not hits:
                 continue
 
@@ -1946,13 +2024,17 @@ def _is_declaration_site(masked, index):
     return "ConfigProperty" in line and "=" in line
 
 
-def _identifier_to_key(match, owner_class, constant_index, unambiguous_bare, accessors):
+def _identifier_to_key(match, owner_class, constant_index, unambiguous_bare, accessors,
+                       scope=None):
     """Map one identifier occurrence to a config key, or None.
 
     Returns (key, via). ``via`` records how the attribution was made so a reader
     can tell a direct constant reference from a call through an accessor.
     """
     first, second = match.group(1), match.group(2)
+    if second == "key" and _looks_like_constant(first):
+        # `ERROR_TABLE_ENABLED.key()`: a bare (often statically imported) constant.
+        second = None
     if second:
         # `HoodieCompactionConfig.INLINE_COMPACT_NUM_DELTA_COMMITS`
         key = constant_index.get((first, second))
@@ -1960,16 +2042,24 @@ def _identifier_to_key(match, owner_class, constant_index, unambiguous_bare, acc
             return key, "constant"
         # `config.getInlineCompactDeltaCommitMax()` -- the receiver is a value,
         # so only the method name carries the attribution.
-        if second in accessors:
-            return accessors[second], "accessor:" + second
+        if second in accessors or second in SAME_NAMED_ACCESSORS:
+            key = accessor_for_receiver(second, match.string[max(0, match.start() - 60):match.end(1)],
+                                        accessors.get(second))
+            return (key, "accessor:" + second) if key else (None, None)
         if _looks_like_constant(second):
             key = unambiguous_bare.get(second)
             if key:
                 return key, "constant"
         return None, None
-    if first in accessors:
-        return accessors[first], "accessor:" + first
+    if first in accessors or first in SAME_NAMED_ACCESSORS:
+        key = accessor_for_receiver(first, match.string[max(0, match.start() - 60):match.start()],
+                                    accessors.get(first))
+        return (key, "accessor:" + first) if key else (None, None)
     if _looks_like_constant(first):
+        if scope is not None:
+            key = resolve_constant(first, owner_class, constant_index, scope)
+            if key or first in scope["local"] or first in scope["imports"]:
+                return (key, "constant") if key else (None, None)
         key = unambiguous_bare.get(first)
         if key:
             return key, "constant"
