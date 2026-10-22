@@ -69,6 +69,30 @@ close every substantive answer with them:
 This is not boilerplate. Config defaults and gating conditions move between releases, and a
 confident answer against the wrong version is worse than no answer.
 
+**When the user names their Hudi version and it is not the catalog's**, which is most real
+questions (0.14.x, 0.15.x and 1.0.x are common in production), do three things before
+answering:
+
+- For every key you recommend, compare its `sinceVersion` with their version. A key newer than
+  their release does not exist for them, and setting it does nothing without warning. Say so, and
+  name what their release uses instead if the catalog shows it: an `alternatives` entry, or the
+  older key the documentation mentions. For example, `hoodie.write.auto.upgrade` (1.0.0) and
+  `hoodie.datasource.meta.sync.glue.catalog_id` (1.1.0) are 1.x keys. About 45% of configs
+  declare no `sinceVersion`. For those, availability is unknown, not "always there".
+- **`sinceVersion` belongs to the config, not to its current key name.** A renamed config keeps
+  its original `sinceVersion`, and its old names move to `alternatives`.
+  `hoodie.metadata.global.record.level.index.enable` says 0.14.0, but on 0.14 and 0.15 the key is
+  `hoodie.metadata.record.index.enable`; the new name is ignored there. So when a config has
+  `alternatives` and the user is on an older release, give the old key as the one to set, and say
+  the current name is newer. Set both if they run mixed versions.
+- Check `deprecatedAfter` the same way, in the other direction.
+- When the answer turns on behaviour (a gate, a default, an override) rather than on a key
+  existing, read the cited code at their release tag, `release-<their version>` (Step 0b). If you
+  cannot, say that the behaviour you describe is master's.
+- Table version is a separate axis from release version. A 1.x reader on a table still at table
+  version 6 takes the pre-8 code paths (`callSiteDefaults` and `unless (...)` gates often name
+  them). Ask which table version `hoodie.properties` shows when it matters.
+
 ## Step 0b — know where you can read source, once
 
 Much of this skill says "open the cited line". Decide up front how you will do that, then stop
