@@ -74,8 +74,9 @@ pass on stderr.
 
 `python3 scripts/test_generate_config_catalog.py` rebuilds the catalog and checks the facts the
 Skill leans on hardest — effective defaults per engine and per code path, Flink options, guard and
-conjunction gates, validations and overrides — each verified by hand against the source. Run it
-after changing the generator.
+conjunction gates, validations and overrides — each verified by hand against the source.
+`scripts/test_generate_config_catalog_units.py` covers the text heuristics on small snippets in
+milliseconds. Run both after changing the generator.
 
 ## What the generator extracts
 

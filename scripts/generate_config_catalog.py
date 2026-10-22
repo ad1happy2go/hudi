@@ -1205,6 +1205,20 @@ def find_method_bodies(masked, original):
         yield match.group("name"), brace_index, end, line_of(original, match.start())
 
 
+LOCAL_CONSTANT_RE = re.compile(
+    r"\bstatic\s+final\s+(?!ConfigProperty\b)[\w<>\[\], ?]+?\s+([A-Z][A-Z0-9_]*)\s*=")
+
+
+def local_constants(masked):
+    """Names a file declares as its own non-config constants.
+
+    JsonToAvroSchemaConverter declares `TYPE = "type"` and reads `node.get(TYPE)`;
+    without this the bare TYPE resolved to HoodieTableConfig.TYPE and JSON
+    helpers became accessors of hoodie.table.type.
+    """
+    return set(LOCAL_CONSTANT_RE.findall(masked))
+
+
 STATIC_IMPORT_RE = re.compile(
     r"^\s*import\s+static\s+[\w.]*?\.(?P<cls>[A-Z][\w$]*)\.(?P<member>[A-Z][A-Z0-9_]*|\*)\s*;", re.M)
 
@@ -1266,6 +1280,9 @@ def resolve_constant(expr, owner_class, constant_index, imports=None):
         resolved = constant_index.get((qualifier, const))
         if resolved:
             return resolved
+        # `obj.TYPE` with an unknown qualifier: only an unambiguous bare name is safe.
+        if _bare_is_ambiguous(const, constant_index):
+            return None
     else:
         resolved = constant_index.get((owner_class, const))
         if resolved:
@@ -1292,7 +1309,7 @@ def resolve_constant(expr, owner_class, constant_index, imports=None):
 # looks like.
 ACCESSOR_CALL_IN_GATE_RE = re.compile(r"\b([a-z][A-Za-z0-9_]*)\s*\(")
 # Scala calls a no-arg accessor without parentheses: `getConfig.inlineClusteringEnabled`.
-ACCESSOR_REF_IN_GATE_RE = re.compile(r"\b([a-z][A-Za-z0-9_]*)\b(?!\s*=)")
+ACCESSOR_REF_IN_GATE_RE = re.compile(r"\b([a-z][A-Za-z0-9_]*)\b(?!\s*=(?!=))")
 
 
 GENERIC_METHOD_NAMES = frozenset((
@@ -1350,7 +1367,10 @@ def accessor_key_for_receiver(name, preceding, default):
     options = AMBIGUOUS_ACCESSORS.get(name)
     if not options:
         return default
-    receiver = re.split(r"[\s;,(=!&|{}]", preceding.rstrip(". \n\t"))[-1].lower()
+    # The receiver is the call chain ending at the dot: `metaClient.getTableConfig()`.
+    # Splitting on punctuation would leave just ")" for a chain ending in a call.
+    chain = re.search(r"([\w$.]*(?:\([^()]*\)[\w$.]*)*)$", preceding.rstrip(". \n\t"))
+    receiver = (chain.group(1) if chain else "").lower()
     for cls, key in options.items():
         if not cls or cls == PRIMARY_ACCESSOR_CLASS:
             continue
@@ -1368,6 +1388,7 @@ def collect_accessors(repo_root, constant_index):
     """
     accessors = defaultdict(set)
     by_class = defaultdict(dict)
+    class_sites = {}
     accessor_sites = {}
     for file_path in walk_source_files(repo_root, (".java",)):
         if SOURCE_DIR_MARKER not in file_path:
@@ -1386,6 +1407,7 @@ def collect_accessors(repo_root, constant_index):
             owner_class = class_match.group(1)
 
         file_imports = static_imports(original)
+        shadowed = local_constants(masked)
         for name, body_start, body_end, sig_line in find_method_bodies(masked, original):
             body = masked[body_start:body_end]
             if len(body) > 600:
@@ -1393,7 +1415,10 @@ def collect_accessors(repo_root, constant_index):
             keys = set()
             for pattern in (GETTER_CALL_RE, ALT_KEYS_CALL_RE):
                 for call in pattern.finditer(body):
-                    key = resolve_constant(call.group("arg"), owner_class, constant_index, file_imports)
+                    arg = call.group("arg")
+                    if "." not in arg and arg in shadowed and (owner_class, arg) not in constant_index:
+                        continue
+                    key = resolve_constant(arg, owner_class, constant_index, file_imports)
                     if key:
                         keys.add(key)
             if len(keys) == 1 and name not in GENERIC_METHOD_NAMES:
@@ -1412,6 +1437,8 @@ def collect_accessors(repo_root, constant_index):
                 accessors[name].add(better or only)
                 by_class[name][owner_class] = better or only
                 accessor_sites.setdefault(name, (owner_class, os.path.relpath(file_path, repo_root), sig_line))
+                class_sites.setdefault((name, owner_class),
+                                       (owner_class, os.path.relpath(file_path, repo_root), sig_line))
     # An accessor name that maps to more than one key across classes is
     # ambiguous at a call site. Dropping it lost getWriteConcurrencyMode,
     # getIndexType, getTableType and getRecordMergeMode -- HoodieMetadataConfig
@@ -1428,9 +1455,10 @@ def collect_accessors(repo_root, constant_index):
         elif PRIMARY_ACCESSOR_CLASS in by_class[name]:
             resolved[name] = by_class[name][PRIMARY_ACCESSOR_CLASS]
             AMBIGUOUS_ACCESSORS[name] = dict(by_class[name])
-            sites = accessor_sites.get(name)
-            if sites and sites[0] != PRIMARY_ACCESSOR_CLASS:
-                accessor_sites[name] = (PRIMARY_ACCESSOR_CLASS,) + sites[1:]
+            # Cite HoodieWriteConfig's own declaration, not whichever class was seen first.
+            primary_site = class_sites.get((name, PRIMARY_ACCESSOR_CLASS))
+            if primary_site:
+                accessor_sites[name] = primary_site
     return resolved, accessor_sites
 
 
@@ -1863,6 +1891,10 @@ def enclosing_gates(masked, body_start, site_index):
                 if not masked[after:line_end].strip():
                     next_end = masked.find("\n", line_end + 1)
                     line_end = len(masked) if next_end < 0 else next_end
+                # `if (c) a else b`: the else branch runs when c is false.
+                else_at = re.search(r"\belse\b", masked[after:line_end])
+                if else_at:
+                    line_end = after + else_at.start()
                 if after <= site_index < line_end:
                     text = summarize_condition(condition)
                     if not CONDITION_NOISE_RE.match(text):
@@ -1910,7 +1942,9 @@ _GUARD_CACHE = {}
 def _method_guards(masked, lo, hi):
     """Per method, once: [(if_start, depth, after_index, guard_text)] for every
     `if` whose block (or brace-less statement) only exits, plus the depth array."""
-    cache_key = (id(masked), lo, hi)
+    # Keyed by the text itself: an id() can be reused once a file's text is freed,
+    # handing the next file this one's guards.
+    cache_key = (hash(masked), len(masked), lo, hi, masked[lo:lo + 64])
     cached = _GUARD_CACHE.get(cache_key)
     if cached is not None:
         return cached
@@ -1925,6 +1959,10 @@ def _method_guards(masked, lo, hi):
             depth -= 1
     guards = []
     for match in IF_RE.finditer(masked, lo, hi):
+        # `else if (b) { return; }` only runs when the earlier arm did not, so
+        # the read after it is not simply "unless (b)".
+        if re.search(r"\belse\s*$", masked[max(lo, match.start() - 12):match.start()]):
+            continue
         condition, after = extract_call_args(masked, match.end() - 1)
         if condition is None:
             continue
@@ -2015,7 +2053,11 @@ def conjunction_gate(masked, lo, hi, site_index):
     if "&&" not in text and "||" not in text:
         return None
     # Trim to the expression: drop a leading `return`, assignment or `if (`.
+    stripped_if = re.match(r"^\s*if\s*\(", text)
     text = re.sub(r"^\s*(?:return\b|(?:val|var|final)?\s*[\w<>\[\], ]*\b\w+\s*=(?!=)|if\s*\()", "", text)
+    if stripped_if:
+        # `if (a && b) {` -> `a && b`: drop the if's own closing paren too.
+        text = re.sub(r"\)\s*\{?\s*$", "", text.rstrip())
     return "when (%s)" % summarize_condition(text.strip().rstrip("{;").strip())
 
 
@@ -2086,6 +2128,18 @@ def find_scala_method_spans(masked, original):
             if later_indent <= indent:
                 end = later_start
                 break
+        # The last def in a class must not run on into the next class or object:
+        # stop at the brace that closes the block the def sits in.
+        depth = 0
+        for j in range(start, end):
+            ch = masked[j]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth < 0:
+                    end = j
+                    break
         yield name, start, end, line_of(original, start)
 
 
@@ -2194,6 +2248,7 @@ def collect_read_sites(repo_root, constant_index, accessors, config_keys, verbos
 
         declaring_file = relative
         file_imports = static_imports(original)
+        shadowed = local_constants(masked)
         with_strings = strip_comments_and_strings(original, keep_string_bodies=True) \
             if '"hoodie.' in original else None
 
@@ -2203,15 +2258,21 @@ def collect_read_sites(repo_root, constant_index, accessors, config_keys, verbos
             hits = []
             for match in IDENTIFIER_RE.finditer(body):
                 key, via = _identifier_to_key(match, owner_class, constant_index,
-                                              unambiguous_bare, accessors, file_imports)
+                                              unambiguous_bare, accessors, file_imports, shadowed)
                 if key and key in config_keys:
                     hits.append((key, body_start + match.start(), via))
             # `props.getBoolean("hoodie.write.track.event.time.watermark", false)`:
             # a key spelled as a literal is a read the identifier scan cannot see.
             if with_strings is not None:
                 for match in re.finditer(r'"(hoodie\.[A-Za-z0-9_.\-]+)"', with_strings[body_start:body_end]):
-                    if match.group(1) in config_keys:
-                        hits.append((match.group(1), body_start + match.start(), "literalKey"))
+                    if match.group(1) not in config_keys:
+                        continue
+                    before = with_strings[max(0, body_start + match.start() - 40):body_start + match.start()]
+                    # `props.setProperty("hoodie.x", ...)` sets the key; it does not read it.
+                    if re.search(r"\b(?:put|putIfAbsent|setProperty|setValue|setDefaultValue|remove|set)\s*\(\s*$",
+                                 before):
+                        continue
+                    hits.append((match.group(1), body_start + match.start(), "literalKey"))
                 hits.sort(key=lambda hit: hit[1])
             if not hits:
                 continue
@@ -2315,7 +2376,7 @@ def _is_declaration_site(masked, index):
 
 
 def _identifier_to_key(match, owner_class, constant_index, unambiguous_bare, accessors,
-                       imports=None):
+                       imports=None, shadowed=frozenset()):
     """Map one identifier occurrence to a config key, or None.
 
     Returns (key, via). ``via`` records how the attribution was made so a reader
@@ -2356,6 +2417,8 @@ def _identifier_to_key(match, owner_class, constant_index, unambiguous_bare, acc
             key = constant_index.get((owner_class, first))
             if key:
                 return key, "constant"
+        if first in shadowed:
+            return None, None
         key = unambiguous_bare.get(first)
         if key:
             return key, "constant"
@@ -2750,10 +2813,6 @@ def collect_overrides(repo_root, constant_index, accessors):
                 gates = enclosing_gates(masked, body_start, call.start())
                 for guard in guard_clauses(masked, body_start, body_end, call.start()):
                     gates.append(guard)
-                if not gates and name in ("build", "setDefaults"):
-                    # An unconditional write in build() is a fixed setting, still
-                    # an override, but say so without inventing a condition.
-                    pass
                 record = OrderedDict([
                     ("value", summarize_condition(value)),
                     ("at", "%s.%s (%s:%d)" % (owner or "?", name, relative,
@@ -2777,7 +2836,7 @@ CONFIG_KEY_IN_TEXT_RE = re.compile(r"\bhoodie\.[a-z0-9_.\-]+[a-z0-9_]")
 MAX_VALIDATIONS = 10
 
 
-def _message_text(arg, text_with_strings):
+def _message_text(arg):
     """The string literals of a message argument, joined: the readable part."""
     parts = re.findall(r'"((?:[^"\\]|\\.)*)"', arg)
     return " ".join(p for p in parts)[:300]
@@ -2841,7 +2900,7 @@ def collect_validations(repo_root, constant_index, accessors, config_keys):
                     continue
                 args = split_top_level_args(args_text)
                 condition = strip_comments_and_strings(args[0]) if args else ""
-                message = _message_text(" ".join(args[1:]), with_strings) if len(args) > 1 else ""
+                message = _message_text(" ".join(args[1:])) if len(args) > 1 else ""
                 found.append((call.group(1), call.start(), condition, message))
             # A throw or a warning under an `if` is a check only when that `if`
             # itself names a config; otherwise it is a runtime failure ("Async
@@ -2865,7 +2924,7 @@ def collect_validations(repo_root, constant_index, accessors, config_keys):
                     args_text, _ = extract_call_args(with_strings, hit.end() - 1)
                     kind = "throw " + hit.group(1) if label == "throw" else "warn"
                     found.append((kind, hit.start(), condition,
-                                  _message_text(args_text or "", with_strings)))
+                                  _message_text(args_text or "")))
             for kind, index, condition, message in found:
                 when = [g for g in enclosing_gates(masked, body_start, index)
                         if g != condition][-2:]
@@ -3071,7 +3130,12 @@ def evaluate_default(expr, ctx, depth=0):
     enum_const = re.fullmatch(r"(?:[\w$]+\s*\.\s*)*([A-Z][\w$]*[a-z][\w$]*)\s*\.\s*([A-Z][A-Z0-9_]*)", expr)
     if enum_const and (enum_const.group(1), enum_const.group(2)) not in ctx["string_constants"] \
             and (enum_const.group(1), enum_const.group(2)) not in ctx["value_constants"]:
-        return enum_const.group(2), "enumConstant"
+        # Only an actual enum: a constant the collectors missed would otherwise be
+        # returned as its own name ("DEFAULT_MAX_SIZE").
+        info = ctx["types"].get(enum_const.group(1))
+        if info and info.get("kind") == "enum":
+            return enum_const.group(2), "enumConstant"
+        return None, None
     # A bare or qualified constant: string, then numeric.
     const = re.fullmatch(r"(?:([A-Z][\w$]*)\s*\.\s*)?([A-Z][A-Z0-9_]*)", expr)
     if const:
@@ -3258,8 +3322,6 @@ def collect_infer_sources(repo_root, entries, constant_index, accessors, string_
     result = {}
     for entry, arg_text, helpers, at, owner, imports in pending:
         key = entry["key"]
-        reads = [k for k in _config_refs(arg_text, owner, constant_index, imports, accessors)
-                 if k != key]
         via = []
         reads = [k for k in _config_refs(arg_text, owner, constant_index, imports, accessors, string_keys)
                  if k != key]
@@ -3495,8 +3557,8 @@ def build_catalog(repo_root, verbose=False):
         print("  configs with engine-specific defaults: %d" % len(engine_defaults),
               file=sys.stderr)
 
-    known_implementations = collect_known_implementations(
-        entries, collect_type_hierarchy(repo_root))
+    types = collect_type_hierarchy(repo_root)
+    known_implementations = collect_known_implementations(entries, types)
     overrides = collect_overrides(repo_root, constant_index, accessors)
     validations = collect_validations(repo_root, constant_index, accessors,
                                       {e["key"] for e in entries if e.get("key")})
@@ -3504,7 +3566,7 @@ def build_catalog(repo_root, verbose=False):
     infer_sources = collect_infer_sources(repo_root, entries, constant_index, accessors,
                                           string_constants)
     default_ctx = {
-        "types": collect_type_hierarchy(repo_root),
+        "types": types,
         "constant_index": constant_index,
         "by_key": {e["key"]: e for e in entries if e.get("key")},
         "enum_values": collect_enum_string_values(repo_root),
@@ -3628,7 +3690,9 @@ def build_catalog(repo_root, verbose=False):
 
         # A literal fallback at the read beats the declaration on that code path.
         # Only the disagreeing ones are worth a reader's attention.
-        declared = normalize_default(entry.get("defaultValue"))
+        # Compare against the evaluated default when there is one: a computed
+        # String.valueOf(10) read elsewhere with 10 is not a disagreement.
+        declared = normalize_default(entry.get("resolvedDefault", entry.get("defaultValue")))
         differing = [site for site in call_site_defaults.get(key, [])
                      if normalize_default(site["value"]) != declared]
         entry["callSiteDefaults"] = differing[:10]
